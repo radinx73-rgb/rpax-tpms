@@ -12,7 +12,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
-import androidx.core.app.ActivityCompat
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 
 /**
@@ -33,6 +33,14 @@ class DashboardActivity : ComponentActivity() {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
     }.toTypedArray()
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        if (hasAllPermissions()) {
+            startTpmsService()
+        }
+    }
 
     private val tpmsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -64,7 +72,7 @@ class DashboardActivity : ComponentActivity() {
         if (hasAllPermissions()) {
             startTpmsService()
         } else {
-            ActivityCompat.requestPermissions(this, requiredPermissions, PERMISSION_REQUEST_CODE)
+            permissionLauncher.launch(requiredPermissions)
         }
     }
 
@@ -85,17 +93,6 @@ class DashboardActivity : ComponentActivity() {
     override fun onStop() {
         unregisterReceiver(tpmsReceiver)
         super.onStop()
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST_CODE && hasAllPermissions()) {
-            startTpmsService()
-        }
     }
 
     private fun hasAllPermissions(): Boolean = requiredPermissions.all {
@@ -126,7 +123,4 @@ class DashboardActivity : ComponentActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
-    companion object {
-        private const val PERMISSION_REQUEST_CODE = 42
-    }
 }

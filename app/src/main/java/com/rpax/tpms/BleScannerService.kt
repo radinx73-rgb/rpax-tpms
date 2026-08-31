@@ -29,6 +29,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.NodeClient
 import com.google.android.gms.wearable.Wearable
 
 /**
@@ -47,6 +48,7 @@ class BleScannerService : Service() {
     private var soundPool: SoundPool? = null
     private var alertSoundId: Int = 0
     private lateinit var messageClient: MessageClient
+    private lateinit var nodeClient: NodeClient
 
     private var lastFrontAlert = false
     private var lastRearAlert = false
@@ -83,6 +85,7 @@ class BleScannerService : Service() {
         vibrator = getVibrator()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         messageClient = Wearable.getMessageClient(this)
+        nodeClient = Wearable.getNodeClient(this)
         setupSoundPool()
         createNotificationChannel()
     }
@@ -225,9 +228,9 @@ class BleScannerService : Service() {
     }
 
     private fun sendWatchNotification(message: String) {
-        messageClient.getConnectedNodes().addOnSuccessListener { nodes ->
+        nodeClient.connectedNodes.addOnSuccessListener { nodes ->
             val payload = message.toByteArray(Charsets.UTF_8)
-            nodes.forEach { node ->
+            for (node in nodes) {
                 messageClient.sendMessage(node.id, WEAR_ALERT_PATH, payload)
             }
         }

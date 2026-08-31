@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="260dp"
+    android:height="140dp"
+    android:viewportWidth="260"
+    android:viewportHeight="140">
+
+    <!-- Rear wheel -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D8D8D8"
+        android:strokeWidth="4"
+        android:pathData="M50,100 m-38,0 a38,38 0 1 0 76,0 a38,38 0 1 0 -76,0" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D8D8D8"
+        android:strokeWidth="3"
+        android:pathData="M50,100 m-14,0 a14,14 0 1 0 28,0 a14,14 0 1 0 -28,0" />
+
+    <!-- Front wheel -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D8D8D8"
+        android:strokeWidth="4"
+        android:pathData="M210,100 m-38,0 a38,38 0 1 0 76,0 a38,38 0 1 0 -76,0" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D8D8D8"
+        android:strokeWidth="3"
+        android:pathData="M210,100 m-14,0 a14,14 0 1 0 28,0 a14,14 0 1 0 -28,0" />
+
+    <!-- Cruiser frame / seat / tank -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D8D8D8"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="
+            M50,90
+            L95,55
+            L150,48
+            L210,90
+            M95,55
+            L70,75
+            L50,90
+            M150,48
+            L165,25
+            M95,55
+            L100,20
+            M100,20 L150,20
+            L165,25
+            " />
+
+    <!-- Handlebar -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D8D8D8"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M165,25 L185,15" />
+
+    <!-- Exhaust pipe -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D8D8D8"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:pathData="M70,75 L150,88" />
+</vector>

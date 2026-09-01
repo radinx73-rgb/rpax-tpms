@@ -27,6 +27,10 @@ class CustomDashboardView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
+    // ---- Interaction ----
+    var onSettingsClick: (() -> Unit)? = null
+    private val settingsIconRect = RectF()
+
     // ---- Live data ----
     var speedKmh: Int = 0
         set(value) { field = value; invalidate() }
@@ -114,12 +118,10 @@ class CustomDashboardView @JvmOverloads constructor(
         textSize = 24f
     }
 
-    private val motoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#D8D8D8")
+    private val settingsIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 5f
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
+        strokeWidth = 3f
+        color = Color.parseColor("#8A8A8A")
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -133,6 +135,37 @@ class CustomDashboardView @JvmOverloads constructor(
         drawLeftPanel(canvas, leftWidth, h)
         canvas.drawLine(leftWidth, 20f, leftWidth, h - 20f, dividerPaint)
         drawRightPanel(canvas, leftWidth, w, h)
+        drawSettingsIcon(canvas, w)
+    }
+
+    private fun drawSettingsIcon(canvas: Canvas, w: Float) {
+        val iconRadius = 16f
+        val cx = w - 30f
+        val cy = 30f
+        settingsIconRect.set(cx - iconRadius - 12f, cy - iconRadius - 12f, cx + iconRadius + 12f, cy + iconRadius + 12f)
+
+        canvas.drawCircle(cx, cy, iconRadius * 0.5f, settingsIconPaint)
+        val teeth = 8
+        for (i in 0 until teeth) {
+            val angle = (2 * Math.PI * i / teeth).toFloat()
+            val innerR = iconRadius * 0.65f
+            val outerR = iconRadius
+            val x1 = cx + innerR * Math.cos(angle.toDouble()).toFloat()
+            val y1 = cy + innerR * Math.sin(angle.toDouble()).toFloat()
+            val x2 = cx + outerR * Math.cos(angle.toDouble()).toFloat()
+            val y2 = cy + outerR * Math.sin(angle.toDouble()).toFloat()
+            canvas.drawLine(x1, y1, x2, y2, settingsIconPaint)
+        }
+    }
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.action == android.view.MotionEvent.ACTION_UP) {
+            if (settingsIconRect.contains(event.x, event.y)) {
+                onSettingsClick?.invoke()
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     private fun drawLeftPanel(canvas: Canvas, panelWidth: Float, h: Float) {
@@ -197,11 +230,21 @@ class CustomDashboardView @JvmOverloads constructor(
     }
 
     private fun drawMotorcycle(canvas: Canvas, rect: RectF, alert: Boolean) {
-        // Red glow under the wheel when alerting.
+        val cx = rect.centerX()
+        val cy = rect.centerY()
+        val scale = minOf(rect.width(), rect.height()) / 260f
+
+        val wheelRadius = 44f * scale
+        // Front wheel on the LEFT, rear wheel on the RIGHT.
+        val frontWheelX = cx - 95f * scale
+        val rearWheelX = cx + 95f * scale
+        val wheelY = cy + 58f * scale
+
+        // Red glow under the front wheel when alerting.
         if (alert) {
-            val glowCx = rect.centerX()
-            val glowCy = rect.bottom - 20f
-            val glowRadius = rect.width() * 0.28f
+            val glowCx = frontWheelX
+            val glowCy = wheelY
+            val glowRadius = wheelRadius * 2.2f
             val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 shader = RadialGradient(
                     glowCx, glowCy, glowRadius,
@@ -212,35 +255,146 @@ class CustomDashboardView @JvmOverloads constructor(
             canvas.drawCircle(glowCx, glowCy, glowRadius, glowPaint)
         }
 
-        // Simplified cruiser silhouette: wheels + frame stroke path.
-        val cx = rect.centerX()
-        val cy = rect.centerY()
-        val scale = minOf(rect.width(), rect.height()) / 260f
+        val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 5f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.parseColor("#E8E8E8")
+        }
+        val spokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f
+            color = Color.parseColor("#8A8A8A")
+        }
+        val chromePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 4f
+            strokeCap = Paint.Cap.ROUND
+            color = Color.parseColor("#C9C9C9")
+        }
 
-        val wheelRadius = 42f * scale
-        val frontWheelX = cx + 90f * scale
-        val rearWheelX = cx - 90f * scale
-        val wheelY = cy + 60f * scale
+        // --- Wheels with spokes and fenders ---
+        drawWheel(canvas, frontWheelX, wheelY, wheelRadius, bodyPaint, spokePaint)
+        drawWheel(canvas, rearWheelX, wheelY, wheelRadius, bodyPaint, spokePaint)
 
-        canvas.drawCircle(frontWheelX, wheelY, wheelRadius, motoPaint)
-        canvas.drawCircle(rearWheelX, wheelY, wheelRadius, motoPaint)
-        canvas.drawCircle(frontWheelX, wheelY, wheelRadius * 0.35f, motoPaint)
-        canvas.drawCircle(rearWheelX, wheelY, wheelRadius * 0.35f, motoPaint)
+        // Front fender
+        val frontFender = Path().apply {
+            addArc(
+                frontWheelX - wheelRadius * 1.05f, wheelY - wheelRadius * 1.25f,
+                frontWheelX + wheelRadius * 1.05f, wheelY + wheelRadius * 0.4f,
+                200f, 140f
+            )
+        }
+        canvas.drawPath(frontFender, bodyPaint)
+
+        // Rear fender (wider, cruiser-style)
+        val rearFender = Path().apply {
+            addArc(
+                rearWheelX - wheelRadius * 1.15f, wheelY - wheelRadius * 1.3f,
+                rearWheelX + wheelRadius * 1.15f, wheelY + wheelRadius * 0.35f,
+                190f, 155f
+            )
+        }
+        canvas.drawPath(rearFender, bodyPaint)
+
+        // --- Frame / fork / tank / seat ---
+        val forkTopX = frontWheelX + 18f * scale
+        val forkTopY = wheelY - wheelRadius * 2.3f
+        val tankLeftX = cx - 10f * scale
+        val tankTopY = cy - 48f * scale
+        val seatRightX = rearWheelX - 15f * scale
+        val seatY = cy - 30f * scale
 
         val frame = Path().apply {
-            moveTo(rearWheelX, wheelY - wheelRadius * 0.2f)
-            lineTo(cx - 20f * scale, cy - 40f * scale)
-            lineTo(cx + 40f * scale, cy - 55f * scale)
-            lineTo(frontWheelX, wheelY - wheelRadius * 0.2f)
-            moveTo(cx - 20f * scale, cy - 40f * scale)
-            lineTo(cx - 60f * scale, cy + 10f * scale)
-            lineTo(rearWheelX, wheelY - wheelRadius * 0.2f)
-            moveTo(cx + 40f * scale, cy - 55f * scale)
-            lineTo(cx + 65f * scale, cy - 90f * scale)
-            moveTo(cx - 20f * scale, cy - 40f * scale)
-            lineTo(cx - 10f * scale, cy - 95f * scale)
+            // front fork
+            moveTo(frontWheelX, wheelY - wheelRadius * 0.15f)
+            lineTo(forkTopX, forkTopY)
+            // steering neck to tank
+            lineTo(tankLeftX, tankTopY)
+            // tank top curve to seat
+            quadTo(cx + 20f * scale, tankTopY - 10f * scale, seatRightX - 30f * scale, seatY)
+            // seat to sissy bar base
+            lineTo(seatRightX, seatY)
+            // down to rear axle area
+            lineTo(rearWheelX, wheelY - wheelRadius * 0.15f)
+            // lower frame rail back to front wheel area
+            moveTo(tankLeftX, tankTopY)
+            lineTo(cx - 55f * scale, cy + 15f * scale)
+            lineTo(frontWheelX, wheelY - wheelRadius * 0.15f)
+            moveTo(cx - 55f * scale, cy + 15f * scale)
+            lineTo(rearWheelX - 25f * scale, wheelY - wheelRadius * 0.1f)
         }
-        canvas.drawPath(frame, motoPaint)
+        canvas.drawPath(frame, bodyPaint)
+
+        // Windshield + handlebar
+        val windshield = Path().apply {
+            moveTo(forkTopX - 6f * scale, forkTopY)
+            lineTo(forkTopX + 12f * scale, forkTopY - 70f * scale)
+            lineTo(forkTopX + 26f * scale, forkTopY - 4f * scale)
+        }
+        canvas.drawPath(windshield, chromePaint)
+        canvas.drawLine(
+            forkTopX - 10f * scale, forkTopY + 4f * scale,
+            forkTopX + 16f * scale, forkTopY - 2f * scale,
+            chromePaint
+        )
+
+        // Headlight
+        canvas.drawCircle(forkTopX + 6f * scale, forkTopY + 2f * scale, 7f * scale, chromePaint)
+
+        // Sissy bar / backrest at the rear
+        val sissyBar = Path().apply {
+            moveTo(seatRightX, seatY)
+            lineTo(seatRightX + 4f * scale, seatY - 34f * scale)
+        }
+        canvas.drawPath(sissyBar, bodyPaint)
+        canvas.drawRoundRect(
+            RectF(
+                seatRightX - 2f * scale, seatY - 46f * scale,
+                seatRightX + 12f * scale, seatY - 30f * scale
+            ),
+            3f, 3f, bodyPaint
+        )
+
+        // Saddlebag under the seat
+        canvas.drawRoundRect(
+            RectF(
+                rearWheelX - wheelRadius * 0.9f, cy + 5f * scale,
+                rearWheelX + wheelRadius * 0.5f, cy + 45f * scale
+            ),
+            6f, 6f, chromePaint
+        )
+
+        // Exhaust pipe
+        canvas.drawLine(
+            cx - 40f * scale, cy + 40f * scale,
+            rearWheelX - wheelRadius * 0.3f, wheelY + wheelRadius * 0.3f,
+            chromePaint
+        )
+    }
+
+    private fun drawWheel(
+        canvas: Canvas,
+        centerX: Float,
+        centerY: Float,
+        radius: Float,
+        rimPaint: Paint,
+        spokePaint: Paint
+    ) {
+        canvas.drawCircle(centerX, centerY, radius, rimPaint)
+        canvas.drawCircle(centerX, centerY, radius * 0.3f, rimPaint)
+        val spokeCount = 12
+        for (i in 0 until spokeCount) {
+            val angle = (2 * Math.PI * i / spokeCount).toFloat()
+            val innerR = radius * 0.32f
+            val outerR = radius * 0.98f
+            val startX = centerX + innerR * Math.cos(angle.toDouble()).toFloat()
+            val startY = centerY + innerR * Math.sin(angle.toDouble()).toFloat()
+            val endX = centerX + outerR * Math.cos(angle.toDouble()).toFloat()
+            val endY = centerY + outerR * Math.sin(angle.toDouble()).toFloat()
+            canvas.drawLine(startX, startY, endX, endY, spokePaint)
+        }
     }
 
     private fun drawTile(

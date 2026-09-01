@@ -67,6 +67,9 @@ class DashboardActivity : ComponentActivity() {
         goFullscreen()
 
         dashboardView = CustomDashboardView(this)
+        dashboardView.onSettingsClick = {
+            startActivity(Intent(this, MainActivity::class.java))
+        }
         setContentView(dashboardView)
 
         if (hasAllPermissions()) {

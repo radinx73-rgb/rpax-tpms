@@ -67,18 +67,21 @@ class MainActivity : ComponentActivity() {
 
         soundCheck = CheckBox(this).apply {
             text = "Sound alerts"
+            setTextColor(android.graphics.Color.WHITE)
             isChecked = settings.soundAlertsEnabled
         }
         layout.addView(soundCheck)
 
         vibeCheck = CheckBox(this).apply {
             text = "Vibration alerts"
+            setTextColor(android.graphics.Color.WHITE)
             isChecked = settings.vibrationAlertsEnabled
         }
         layout.addView(vibeCheck)
 
         watchCheck = CheckBox(this).apply {
             text = "Wear OS notifications"
+            setTextColor(android.graphics.Color.WHITE)
             isChecked = settings.watchNotificationsEnabled
         }
         layout.addView(watchCheck)
@@ -113,6 +116,7 @@ class MainActivity : ComponentActivity() {
     private fun sectionTitle(text: String): TextView = TextView(this).apply {
         this.text = text
         textSize = 20f
+        setTextColor(android.graphics.Color.WHITE)
         setPadding(0, 32, 0, 16)
         gravity = Gravity.START
     }
@@ -120,6 +124,7 @@ class MainActivity : ComponentActivity() {
     private fun fieldLabel(text: String): TextView = TextView(this).apply {
         this.text = text
         textSize = 14f
+        setTextColor(android.graphics.Color.parseColor("#B0B0B0"))
         setPadding(0, 16, 0, 4)
     }
 
@@ -127,6 +132,8 @@ class MainActivity : ComponentActivity() {
         inputType = android.text.InputType.TYPE_CLASS_NUMBER or
             android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
             android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+        setTextColor(android.graphics.Color.WHITE)
+        setHintTextColor(android.graphics.Color.parseColor("#808080"))
         setText(initialValue.toString())
     }
 }

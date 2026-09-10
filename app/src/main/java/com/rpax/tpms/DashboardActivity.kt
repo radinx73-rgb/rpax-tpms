@@ -49,10 +49,10 @@ class DashboardActivity : ComponentActivity() {
                     val position = intent.getStringExtra(BleScannerService.EXTRA_POSITION)
                     val pressure = intent.getFloatExtra(BleScannerService.EXTRA_PRESSURE, 0f)
                     val temp = intent.getIntExtra(BleScannerService.EXTRA_TEMP, 0)
-                    val alert = intent.getBooleanExtra(BleScannerService.EXTRA_ALERT, false)
+                    val batteryOk = intent.getBooleanExtra(BleScannerService.EXTRA_BATTERY_OK, true)
                     when (position) {
-                        TpmsDecoder.Position.FRONT.name -> dashboardView.updateFront(pressure, temp, alert)
-                        TpmsDecoder.Position.REAR.name -> dashboardView.updateRear(pressure, temp, alert)
+                        TpmsDecoder.Position.FRONT.name -> dashboardView.updateFront(pressure, temp, batteryOk)
+                        TpmsDecoder.Position.REAR.name -> dashboardView.updateRear(pressure, temp, batteryOk)
                     }
                 }
                 BleScannerService.ACTION_SPEED_UPDATE -> {

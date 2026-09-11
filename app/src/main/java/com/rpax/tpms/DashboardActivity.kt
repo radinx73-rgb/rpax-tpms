@@ -1,6 +1,7 @@
 package com.rpax.tpms
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -8,6 +9,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -16,8 +18,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 
 /**
- * Fullscreen 800x480 dashboard activity for the M560-TPMS display.
+ * Fullscreen dashboard activity for the M560-TPMS display.
  * Hosts CustomDashboardView and updates it from BleScannerService broadcasts.
+ * This is the app's launcher activity; the settings screen (MainActivity) is
+ * reached only via the on-screen gear icon.
  */
 class DashboardActivity : ComponentActivity() {
 
@@ -70,6 +74,9 @@ class DashboardActivity : ComponentActivity() {
         dashboardView.onSettingsClick = {
             startActivity(Intent(this, MainActivity::class.java))
         }
+        dashboardView.onExitClick = {
+            confirmExit()
+        }
         setContentView(dashboardView)
 
         if (hasAllPermissions()) {
@@ -107,6 +114,27 @@ class DashboardActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, serviceIntent)
     }
 
+    /**
+     * Asks for confirmation before fully shutting the app down -- this stops
+     * BLE scanning and GPS tracking (via BleScannerService), removes the app
+     * from Recents, and kills the process outright, so nothing keeps running
+     * in the background until the user manually restarts it.
+     */
+    private fun confirmExit() {
+        AlertDialog.Builder(this)
+            .setTitle("Stop RPax TPMS?")
+            .setMessage("This stops tire monitoring and closes the app completely.")
+            .setPositiveButton("Stop & Close") { _, _ -> exitApp() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun exitApp() {
+        stopService(Intent(this, BleScannerService::class.java))
+        finishAndRemoveTask()
+        Process.killProcess(Process.myPid())
+    }
+
     private fun goFullscreen() {
         window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -125,5 +153,4 @@ class DashboardActivity : ComponentActivity() {
         }
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
-
 }

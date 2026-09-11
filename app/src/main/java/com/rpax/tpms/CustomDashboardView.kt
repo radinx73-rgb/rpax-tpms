@@ -5,26 +5,25 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffColorFilter
 import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.View
 import java.text.SimpleDateFormat
-import java.util.Locale
 import java.util.Date
+import java.util.Locale
 
 /**
- * Pixel-fitted 800x480 dashboard replicating the reference photo:
+ * Pixel-fitted 800x480+ dashboard replicating the reference photo:
  *  Left: huge GPS speed + clock/date
- *  Right: status bar, cruiser motorcycle graphic with alert glow, FRONT/REAR tiles
+ *  Right: status bar (with settings/exit icons), cruiser motorcycle graphic
+ *  with alert glow, FRONT/REAR tiles
  */
 class CustomDashboardView @JvmOverloads constructor(
     context: Context,
@@ -32,9 +31,13 @@ class CustomDashboardView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
+    private val density = resources.displayMetrics.density.coerceAtLeast(1f)
+
     // ---- Interaction ----
     var onSettingsClick: (() -> Unit)? = null
+    var onExitClick: (() -> Unit)? = null
     private val settingsIconRect = RectF()
+    private val exitIconRect = RectF()
 
     // ---- Settings (thresholds) ----
     private val settings = TpmsSettings(context)
@@ -76,8 +79,8 @@ class CustomDashboardView @JvmOverloads constructor(
         get() = rearHasData && (System.currentTimeMillis() - rearLastUpdateAt) > staleAfterMillis
 
     // Real pressure/temperature alert -- only meaningful once we have a
-    // reading, and only while that reading is still fresh. This is what's
-    // ever allowed to trigger the red "ALERT" state; a mere gap between
+    // reading, and only while that reading is still fresh. This is the only
+    // thing allowed to trigger the red "ALERT" state; a mere gap between
     // transmissions never does.
     private val frontAlert: Boolean
         get() = frontHasData && !frontStale &&
@@ -101,29 +104,50 @@ class CustomDashboardView @JvmOverloads constructor(
         invalidate()
     }
 
+    // ---- Periodic ticker: keeps clock + stale-detection current even
+    // without new sensor broadcasts ----
+    private val tickHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val tickRunnable = object : Runnable {
+        override fun run() {
+            invalidate()
+            tickHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        tickHandler.post(tickRunnable)
+    }
+
+    override fun onDetachedFromWindow() {
+        tickHandler.removeCallbacks(tickRunnable)
+        super.onDetachedFromWindow()
+    }
+
     // ---- Colors ----
     private val bgColor = Color.parseColor("#0A0A0A")
     private val accentGreen = Color.parseColor("#2ECC71")
     private val accentRed = Color.parseColor("#E74C3C")
-    private val panelColor = Color.parseColor("#161616")
+    private val accentAmber = Color.parseColor("#B8860B")
     private val tileColor = Color.parseColor("#1E1E1E")
     private val textWhite = Color.parseColor("#F5F5F5")
     private val textGray = Color.parseColor("#8A8A8A")
+    private val neutralGray = Color.parseColor("#6E6E6E")
 
     private val bgPaint = Paint().apply { color = bgColor }
     private val dividerPaint = Paint().apply { color = Color.parseColor("#2A2A2A"); strokeWidth = 2f }
 
+    // Speed digits: enlarged ~75% versus the original design (190 -> ~335).
     private val speedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textWhite
         typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
-        textSize = 190f
+        textSize = 335f
     }
     private val speedUnitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textGray
         textAlign = Paint.Align.CENTER
-        textSize = 34f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+        textSize = 40f
     }
     private val clockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textWhite
@@ -145,46 +169,30 @@ class CustomDashboardView @JvmOverloads constructor(
         typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
     }
 
+    // Tile fonts: enlarged and centered per request.
     private val tileLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textGray
-        textAlign = Paint.Align.LEFT
-        textSize = 26f
+        textAlign = Paint.Align.CENTER
+        textSize = 28f
         letterSpacing = 0.1f
     }
     private val tileValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textWhite
-        textAlign = Paint.Align.LEFT
-        textSize = 60f
+        textAlign = Paint.Align.CENTER
+        textSize = 92f
         typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
     }
     private val tileTempPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textGray
-        textAlign = Paint.Align.LEFT
-        textSize = 30f
+        textAlign = Paint.Align.CENTER
+        textSize = 36f
     }
 
-    private val settingsIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val iconStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 3f
-        color = Color.parseColor("#8A8A8A")
-    }
-
-    private val tickHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val tickRunnable = object : Runnable {
-        override fun run() {
-            invalidate()
-            tickHandler.postDelayed(this, 1000L)
-        }
-    }
-
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        tickHandler.post(tickRunnable)
-    }
-
-    override fun onDetachedFromWindow() {
-        tickHandler.removeCallbacks(tickRunnable)
-        super.onDetachedFromWindow()
+        strokeWidth = 3f * density
+        strokeCap = Paint.Cap.ROUND
+        color = Color.WHITE
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -198,37 +206,6 @@ class CustomDashboardView @JvmOverloads constructor(
         drawLeftPanel(canvas, leftWidth, h)
         canvas.drawLine(leftWidth, 20f, leftWidth, h - 20f, dividerPaint)
         drawRightPanel(canvas, leftWidth, w, h)
-        drawSettingsIcon(canvas, w)
-    }
-
-    private fun drawSettingsIcon(canvas: Canvas, w: Float) {
-        val iconRadius = 16f
-        val cx = w - 30f
-        val cy = 30f
-        settingsIconRect.set(cx - iconRadius - 12f, cy - iconRadius - 12f, cx + iconRadius + 12f, cy + iconRadius + 12f)
-
-        canvas.drawCircle(cx, cy, iconRadius * 0.5f, settingsIconPaint)
-        val teeth = 8
-        for (i in 0 until teeth) {
-            val angle = (2 * Math.PI * i / teeth).toFloat()
-            val innerR = iconRadius * 0.65f
-            val outerR = iconRadius
-            val x1 = cx + innerR * Math.cos(angle.toDouble()).toFloat()
-            val y1 = cy + innerR * Math.sin(angle.toDouble()).toFloat()
-            val x2 = cx + outerR * Math.cos(angle.toDouble()).toFloat()
-            val y2 = cy + outerR * Math.sin(angle.toDouble()).toFloat()
-            canvas.drawLine(x1, y1, x2, y2, settingsIconPaint)
-        }
-    }
-
-    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
-        if (event.action == android.view.MotionEvent.ACTION_UP) {
-            if (settingsIconRect.contains(event.x, event.y)) {
-                onSettingsClick?.invoke()
-                return true
-            }
-        }
-        return super.onTouchEvent(event)
     }
 
     private fun drawLeftPanel(canvas: Canvas, panelWidth: Float, h: Float) {
@@ -240,9 +217,9 @@ class CustomDashboardView @JvmOverloads constructor(
         canvas.drawText(dateFormat.format(now).uppercase(Locale.getDefault()), centerX, 132f, datePaint)
 
         // Huge speed value, vertically centered
-        val speedBaseline = h / 2f + 60f
+        val speedBaseline = h / 2f + 90f
         canvas.drawText(speedKmh.toString(), centerX, speedBaseline, speedPaint)
-        canvas.drawText("km/h", centerX, speedBaseline + 55f, speedUnitPaint)
+        canvas.drawText("km/h", centerX, speedBaseline + 60f, speedUnitPaint)
     }
 
     private fun drawRightPanel(canvas: Canvas, left: Float, right: Float, h: Float) {
@@ -253,11 +230,12 @@ class CustomDashboardView @JvmOverloads constructor(
         val panelWidthPx = panelRight - panelLeft
 
         // Status bar
-        val statusRect = RectF(panelLeft, 18f, panelRight, 82f)
+        val statusBarHeight = 64f * density
+        val statusRect = RectF(panelLeft, 18f, panelRight, 18f + statusBarHeight)
         val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = when {
                 anyAlert -> accentRed
-                noDataYet -> Color.parseColor("#B8860B")
+                noDataYet -> accentAmber
                 else -> accentGreen
             }
         }
@@ -276,13 +254,16 @@ class CustomDashboardView @JvmOverloads constructor(
             statusBarTextPaint
         )
 
+        drawStatusBarIcons(canvas, statusRect)
+
         // Motorcycle graphic area
         val motoTop = statusRect.bottom + 20f
-        val motoBottom = h - 210f
+        val motoBottom = h - 260f
         val motoRect = RectF(panelLeft, motoTop, panelRight, motoBottom)
         drawMotorcycle(canvas, motoRect, anyAlert)
 
-        // Tiles: FRONT / REAR
+        // Tiles: FRONT / REAR -- extended down toward the wheels for bigger,
+        // centered readouts.
         val tileTop = motoBottom + 16f
         val tileBottom = h - 16f
         val tileGap = 16f
@@ -295,6 +276,61 @@ class CustomDashboardView @JvmOverloads constructor(
         drawTile(canvas, rearTileRect, "REAR", rearPressureBar, rearTempC, rearAlert, rearHasData, rearStale, rearBatteryOk)
     }
 
+    /**
+     * Settings (gear) and exit (power) icons, drawn INSIDE the status bar so
+     * they're always a fixed, visible, easily-tappable size regardless of
+     * screen resolution (previous version anchored them to raw pixel offsets
+     * from the screen edge, which made them nearly invisible on high-res
+     * displays).
+     */
+    private fun drawStatusBarIcons(canvas: Canvas, statusRect: RectF) {
+        val iconRadius = 16f * density
+        val margin = 20f * density
+        val iconCy = statusRect.centerY()
+
+        // Exit (power) icon: far right.
+        val exitCx = statusRect.right - margin - iconRadius
+        exitIconRect.set(
+            exitCx - iconRadius - 12f * density, iconCy - iconRadius - 12f * density,
+            exitCx + iconRadius + 12f * density, iconCy + iconRadius + 12f * density
+        )
+        canvas.drawCircle(exitCx, iconCy, iconRadius * 0.62f, iconStrokePaint)
+        canvas.drawLine(exitCx, iconCy - iconRadius * 0.75f, exitCx, iconCy - iconRadius * 0.1f, iconStrokePaint)
+
+        // Settings (gear) icon: just to the left of the exit icon.
+        val gearCx = exitCx - iconRadius * 2f - margin
+        settingsIconRect.set(
+            gearCx - iconRadius - 12f * density, iconCy - iconRadius - 12f * density,
+            gearCx + iconRadius + 12f * density, iconCy + iconRadius + 12f * density
+        )
+        canvas.drawCircle(gearCx, iconCy, iconRadius * 0.5f, iconStrokePaint)
+        val teeth = 8
+        for (i in 0 until teeth) {
+            val angle = (2 * Math.PI * i / teeth).toFloat()
+            val innerR = iconRadius * 0.65f
+            val outerR = iconRadius
+            val x1 = gearCx + innerR * Math.cos(angle.toDouble()).toFloat()
+            val y1 = iconCy + innerR * Math.sin(angle.toDouble()).toFloat()
+            val x2 = gearCx + outerR * Math.cos(angle.toDouble()).toFloat()
+            val y2 = iconCy + outerR * Math.sin(angle.toDouble()).toFloat()
+            canvas.drawLine(x1, y1, x2, y2, iconStrokePaint)
+        }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_UP) {
+            if (settingsIconRect.contains(event.x, event.y)) {
+                onSettingsClick?.invoke()
+                return true
+            }
+            if (exitIconRect.contains(event.x, event.y)) {
+                onExitClick?.invoke()
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
     private fun drawMotorcycle(canvas: Canvas, rect: RectF, alert: Boolean) {
         val bitmap = motorcycleBitmap
         if (bitmap != null) {
@@ -305,7 +341,6 @@ class CustomDashboardView @JvmOverloads constructor(
     }
 
     private fun drawMotorcycleBitmap(canvas: Canvas, rect: RectF, alert: Boolean, bitmap: Bitmap) {
-        // Scale to fit the rect while preserving aspect ratio, centered.
         val bitmapAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
         val rectAspect = rect.width() / rect.height()
 
@@ -323,7 +358,6 @@ class CustomDashboardView @JvmOverloads constructor(
         val top = rect.centerY() - drawHeight / 2f
         val destRect = RectF(left, top, left + drawWidth, top + drawHeight)
 
-        // Red glow behind the front wheel area (left third of the image) when alerting.
         if (alert) {
             val glowCx = destRect.left + drawWidth * 0.22f
             val glowCy = destRect.bottom - drawHeight * 0.12f
@@ -349,12 +383,10 @@ class CustomDashboardView @JvmOverloads constructor(
         val scale = minOf(rect.width(), rect.height()) / 260f
 
         val wheelRadius = 44f * scale
-        // Front wheel on the LEFT, rear wheel on the RIGHT.
         val frontWheelX = cx - 95f * scale
         val rearWheelX = cx + 95f * scale
         val wheelY = cy + 58f * scale
 
-        // Red glow under the front wheel when alerting.
         if (alert) {
             val glowCx = frontWheelX
             val glowCy = wheelY
@@ -388,11 +420,9 @@ class CustomDashboardView @JvmOverloads constructor(
             color = Color.parseColor("#C9C9C9")
         }
 
-        // --- Wheels with spokes and fenders ---
         drawWheel(canvas, frontWheelX, wheelY, wheelRadius, bodyPaint, spokePaint)
         drawWheel(canvas, rearWheelX, wheelY, wheelRadius, bodyPaint, spokePaint)
 
-        // Front fender
         val frontFender = Path().apply {
             addArc(
                 frontWheelX - wheelRadius * 1.05f, wheelY - wheelRadius * 1.25f,
@@ -402,7 +432,6 @@ class CustomDashboardView @JvmOverloads constructor(
         }
         canvas.drawPath(frontFender, bodyPaint)
 
-        // Rear fender (wider, cruiser-style)
         val rearFender = Path().apply {
             addArc(
                 rearWheelX - wheelRadius * 1.15f, wheelY - wheelRadius * 1.3f,
@@ -412,7 +441,6 @@ class CustomDashboardView @JvmOverloads constructor(
         }
         canvas.drawPath(rearFender, bodyPaint)
 
-        // --- Frame / fork / tank / seat ---
         val forkTopX = frontWheelX + 18f * scale
         val forkTopY = wheelY - wheelRadius * 2.3f
         val tankLeftX = cx - 10f * scale
@@ -421,18 +449,12 @@ class CustomDashboardView @JvmOverloads constructor(
         val seatY = cy - 30f * scale
 
         val frame = Path().apply {
-            // front fork
             moveTo(frontWheelX, wheelY - wheelRadius * 0.15f)
             lineTo(forkTopX, forkTopY)
-            // steering neck to tank
             lineTo(tankLeftX, tankTopY)
-            // tank top curve to seat
             quadTo(cx + 20f * scale, tankTopY - 10f * scale, seatRightX - 30f * scale, seatY)
-            // seat to sissy bar base
             lineTo(seatRightX, seatY)
-            // down to rear axle area
             lineTo(rearWheelX, wheelY - wheelRadius * 0.15f)
-            // lower frame rail back to front wheel area
             moveTo(tankLeftX, tankTopY)
             lineTo(cx - 55f * scale, cy + 15f * scale)
             lineTo(frontWheelX, wheelY - wheelRadius * 0.15f)
@@ -441,7 +463,6 @@ class CustomDashboardView @JvmOverloads constructor(
         }
         canvas.drawPath(frame, bodyPaint)
 
-        // Windshield + handlebar
         val windshield = Path().apply {
             moveTo(forkTopX - 6f * scale, forkTopY)
             lineTo(forkTopX + 12f * scale, forkTopY - 70f * scale)
@@ -454,10 +475,8 @@ class CustomDashboardView @JvmOverloads constructor(
             chromePaint
         )
 
-        // Headlight
         canvas.drawCircle(forkTopX + 6f * scale, forkTopY + 2f * scale, 7f * scale, chromePaint)
 
-        // Sissy bar / backrest at the rear
         val sissyBar = Path().apply {
             moveTo(seatRightX, seatY)
             lineTo(seatRightX + 4f * scale, seatY - 34f * scale)
@@ -471,7 +490,6 @@ class CustomDashboardView @JvmOverloads constructor(
             3f, 3f, bodyPaint
         )
 
-        // Saddlebag under the seat
         canvas.drawRoundRect(
             RectF(
                 rearWheelX - wheelRadius * 0.9f, cy + 5f * scale,
@@ -480,7 +498,6 @@ class CustomDashboardView @JvmOverloads constructor(
             6f, 6f, chromePaint
         )
 
-        // Exhaust pipe
         canvas.drawLine(
             cx - 40f * scale, cy + 40f * scale,
             rearWheelX - wheelRadius * 0.3f, wheelY + wheelRadius * 0.3f,
@@ -522,8 +539,6 @@ class CustomDashboardView @JvmOverloads constructor(
         stale: Boolean,
         batteryOk: Boolean
     ) {
-        val neutralGray = Color.parseColor("#6E6E6E")
-
         val bgPaintTile = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = if (alert) Color.parseColor("#3A1414") else tileColor
         }
@@ -538,48 +553,12 @@ class CustomDashboardView @JvmOverloads constructor(
             canvas.drawRoundRect(rect, 16f, 16f, borderPaint)
         }
 
-        val padding = 20f
-        val textX = rect.left + padding + 46f // leave room for tpms icon glyph
-        val labelBaseline = rect.top + padding + 22f
-        canvas.drawText(label, textX, labelBaseline, tileLabelPaint)
+        val centerX = rect.centerX()
+        val padding = 22f
 
-        if (stale) {
-            val stalePaint = Paint(tileLabelPaint).apply { color = Color.parseColor("#B8860B") }
-            canvas.drawText("NO SIGNAL", rect.right - padding, labelBaseline, Paint(stalePaint).apply {
-                textAlign = Paint.Align.RIGHT
-            })
-        }
-
-        val valuePaint = when {
-            alert -> Paint(tileValuePaint).apply { color = accentRed }
-            !hasData || stale -> Paint(tileValuePaint).apply { color = neutralGray }
-            else -> tileValuePaint
-        }
-
-        val valueBaseline = labelBaseline + 58f
-        val valueText = if (hasData) String.format(Locale.US, "%.1f bar", pressureBar) else "-- bar"
-        canvas.drawText(valueText, textX, valueBaseline, valuePaint)
-
-        val tempPaint = if (!hasData || stale) {
-            Paint(tileTempPaint).apply { color = neutralGray }
-        } else tileTempPaint
-        val tempBaseline = valueBaseline + 36f
-        val tempText = if (hasData) "$tempC°C" else "--°C"
-        canvas.drawText(tempText, textX, tempBaseline, tempPaint)
-
-        if (hasData && !batteryOk) {
-            val lowBatteryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = accentRed
-                textAlign = Paint.Align.RIGHT
-                textSize = 22f
-                typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
-            }
-            canvas.drawText("LOW BATTERY", rect.right - padding, rect.bottom - padding + 2f, lowBatteryPaint)
-        }
-
-        // Small tire glyph to the left, colored per state
-        val iconCx = rect.left + padding + 12f
-        val iconCy = rect.centerY()
+        // Small tire glyph, top-left corner (out of the way of centered text).
+        val iconCx = rect.left + padding + 14f
+        val iconCy = rect.top + padding + 14f
         val iconColor = when {
             alert -> accentRed
             !hasData || stale -> neutralGray
@@ -590,7 +569,44 @@ class CustomDashboardView @JvmOverloads constructor(
             strokeWidth = 4f
             color = iconColor
         }
-        canvas.drawCircle(iconCx, iconCy, 20f, iconPaint)
-        canvas.drawCircle(iconCx, iconCy, 8f, iconPaint)
+        canvas.drawCircle(iconCx, iconCy, 16f, iconPaint)
+        canvas.drawCircle(iconCx, iconCy, 6f, iconPaint)
+
+        val labelBaseline = rect.top + padding + 22f
+        canvas.drawText(label, centerX, labelBaseline, tileLabelPaint)
+
+        if (stale) {
+            val stalePaint = Paint(tileLabelPaint).apply { color = accentAmber }
+            canvas.drawText("NO SIGNAL", rect.right - padding - 60f, labelBaseline, Paint(stalePaint).apply {
+                textAlign = Paint.Align.RIGHT
+            })
+        }
+
+        val valuePaint = when {
+            alert -> Paint(tileValuePaint).apply { color = accentRed }
+            !hasData || stale -> Paint(tileValuePaint).apply { color = neutralGray }
+            else -> tileValuePaint
+        }
+
+        val valueBaseline = rect.centerY() + 30f
+        val valueText = if (hasData) String.format(Locale.US, "%.1f bar", pressureBar) else "-- bar"
+        canvas.drawText(valueText, centerX, valueBaseline, valuePaint)
+
+        val tempPaint = if (!hasData || stale) {
+            Paint(tileTempPaint).apply { color = neutralGray }
+        } else tileTempPaint
+        val tempBaseline = valueBaseline + 46f
+        val tempText = if (hasData) "$tempC°C" else "--°C"
+        canvas.drawText(tempText, centerX, tempBaseline, tempPaint)
+
+        if (hasData && !batteryOk) {
+            val lowBatteryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = accentRed
+                textAlign = Paint.Align.RIGHT
+                textSize = 24f
+                typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+            }
+            canvas.drawText("LOW BATTERY", rect.right - padding, rect.bottom - padding + 2f, lowBatteryPaint)
+        }
     }
 }

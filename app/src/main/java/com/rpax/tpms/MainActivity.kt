@@ -26,6 +26,8 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var settings: TpmsSettings
 
+    private lateinit var frontMacInput: EditText
+    private lateinit var rearMacInput: EditText
     private lateinit var frontMinInput: EditText
     private lateinit var frontMaxInput: EditText
     private lateinit var rearMinInput: EditText
@@ -47,7 +49,17 @@ class MainActivity : ComponentActivity() {
         root.addView(layout)
         setContentView(root)
 
-        layout.addView(sectionTitle("RPax TPMS — Thresholds"))
+        layout.addView(sectionTitle("RPax TPMS — Sensor Pairing"))
+
+        layout.addView(fieldLabel("Front sensor MAC (e.g. 9C:7F:64:5B:2A:04)"))
+        frontMacInput = macInput(settings.frontMac)
+        layout.addView(frontMacInput)
+
+        layout.addView(fieldLabel("Rear sensor MAC (e.g. 9C:7F:64:5B:2C:63)"))
+        rearMacInput = macInput(settings.rearMac)
+        layout.addView(rearMacInput)
+
+        layout.addView(sectionTitle("Thresholds"))
 
         layout.addView(fieldLabel("Front min pressure (bar)"))
         frontMinInput = numberInput(settings.frontMinBar)
@@ -110,6 +122,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun saveSettings() {
+        settings.frontMac = frontMacInput.text.toString()
+        settings.rearMac = rearMacInput.text.toString()
         settings.frontMinBar = frontMinInput.text.toString().toFloatOrNull() ?: settings.frontMinBar
         settings.frontMaxBar = frontMaxInput.text.toString().toFloatOrNull() ?: settings.frontMaxBar
         settings.rearMinBar = rearMinInput.text.toString().toFloatOrNull() ?: settings.rearMinBar
@@ -134,6 +148,15 @@ class MainActivity : ComponentActivity() {
         textSize = 14f
         setTextColor(android.graphics.Color.parseColor("#B0B0B0"))
         setPadding(0, 16, 0, 4)
+    }
+
+    private fun macInput(initialValue: String): EditText = EditText(this).apply {
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        setTextColor(android.graphics.Color.WHITE)
+        setHintTextColor(android.graphics.Color.parseColor("#808080"))
+        hint = "XX:XX:XX:XX:XX:XX"
+        setText(initialValue)
     }
 
     private fun numberInput(initialValue: Float): EditText = EditText(this).apply {

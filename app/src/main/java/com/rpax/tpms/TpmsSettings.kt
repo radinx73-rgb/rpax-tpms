@@ -4,8 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Persists user-configurable alert thresholds and unit preferences.
- * Defaults are tuned for a Kawasaki VN800 Classic (cold pressure spec ~2.25 bar F/R).
+ * Persists user-configurable alert thresholds, sensor MAC addresses, and
+ * unit preferences. Defaults are tuned for a Kawasaki VN800 Classic (cold
+ * pressure spec ~2.25 bar F/R) and this app's original pair of sensors.
  */
 class TpmsSettings(context: Context) {
 
@@ -31,6 +32,18 @@ class TpmsSettings(context: Context) {
     var maxTempC: Int
         get() = prefs.getInt(KEY_MAX_TEMP, DEFAULT_MAX_TEMP)
         set(value) = prefs.edit().putInt(KEY_MAX_TEMP, value).apply()
+
+    // Per-installation sensor MAC addresses. Any two physical DJTPMS-protocol
+    // sensors can be paired here without touching code -- each real sensor
+    // has its own unique factory MAC, so this is what actually distinguishes
+    // "this person's front sensor" from anyone else's.
+    var frontMac: String
+        get() = prefs.getString(KEY_FRONT_MAC, TpmsDecoder.DEFAULT_FRONT_MAC) ?: TpmsDecoder.DEFAULT_FRONT_MAC
+        set(value) = prefs.edit().putString(KEY_FRONT_MAC, value.trim().uppercase()).apply()
+
+    var rearMac: String
+        get() = prefs.getString(KEY_REAR_MAC, TpmsDecoder.DEFAULT_REAR_MAC) ?: TpmsDecoder.DEFAULT_REAR_MAC
+        set(value) = prefs.edit().putString(KEY_REAR_MAC, value.trim().uppercase()).apply()
 
     var soundAlertsEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND_ENABLED, true)
@@ -64,6 +77,8 @@ class TpmsSettings(context: Context) {
         private const val KEY_REAR_MIN = "rear_min_bar"
         private const val KEY_REAR_MAX = "rear_max_bar"
         private const val KEY_MAX_TEMP = "max_temp_c"
+        private const val KEY_FRONT_MAC = "front_mac"
+        private const val KEY_REAR_MAC = "rear_mac"
         private const val KEY_SOUND_ENABLED = "sound_enabled"
         private const val KEY_VIBE_ENABLED = "vibe_enabled"
         private const val KEY_WATCH_ENABLED = "watch_enabled"

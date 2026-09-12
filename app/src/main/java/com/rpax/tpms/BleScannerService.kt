@@ -34,10 +34,13 @@ import com.google.android.gms.wearable.Wearable
 
 /**
  * Foreground service that:
- *  - Scans BLE advertisements from the two DJTPMS sensors (front/rear)
+ *  - Scans BLE advertisements from the two configured DJTPMS sensors
+ *    (front/rear MAC addresses come from TpmsSettings, editable in the
+ *    app's settings screen -- not hardcoded, so any pair of DJTPMS-protocol
+ *    sensors can be paired without a code change)
  *  - Tracks GPS speed via FusedLocationProviderClient
  *  - Raises audible / haptic / Wear OS alerts when thresholds are exceeded
- *  - Broadcasts decoded readings to DashboardActivity via LocalBroadcastManager-style intents
+ *  - Broadcasts decoded readings to DashboardActivity via intents
  */
 class BleScannerService : Service() {
 
@@ -73,7 +76,6 @@ class BleScannerService : Service() {
         }
 
         override fun onScanFailed(errorCode: Int) {
-            // Restart scanning after a short delay on failure.
             stopScanning()
             startScanning()
         }
@@ -147,14 +149,14 @@ class BleScannerService : Service() {
 
     private fun handleScanResult(result: ScanResult) {
         val mac = result.device.address ?: return
-        val position = TpmsDecoder.positionForMac(mac)
+        val position = TpmsDecoder.positionForMac(mac, settings.frontMac, settings.rearMac)
         if (position == TpmsDecoder.Position.UNKNOWN) return
 
         val manufacturerData = result.scanRecord?.manufacturerSpecificData ?: return
         if (manufacturerData.size() == 0) return
 
         val payload = manufacturerData.valueAt(0) ?: return
-        val reading = TpmsDecoder.decode(mac, payload) ?: return
+        val reading = TpmsDecoder.decode(position, mac, payload) ?: return
 
         processReading(reading)
     }
@@ -256,7 +258,7 @@ class BleScannerService : Service() {
             .setMinUpdateIntervalMillis(500L)
             .build()
         try {
-            fusedLocationClient.requestLocationUpdates(request, locationCallback, mainLooperSafe())
+            fusedLocationClient.requestLocationUpdates(request, locationCallback, mainLooper)
         } catch (_: SecurityException) {
             // Missing ACCESS_FINE_LOCATION; speed will remain unavailable.
         }
@@ -265,8 +267,6 @@ class BleScannerService : Service() {
     private fun stopLocationUpdates() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
     }
-
-    private fun mainLooperSafe() = mainLooper
 
     // ------------------------------------------------------------ Broadcasts
 

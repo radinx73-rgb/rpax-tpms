@@ -14,11 +14,21 @@ package com.rpax.tpms
  *
  * Pressure conversion: bar = rawByte / 18.125f
  * Temperature conversion: celsius = rawByte - 87
+ *
+ * Sensor MAC addresses are NOT hardcoded here -- every physical BLE sensor
+ * has its own unique factory MAC, so which two addresses count as "front"
+ * and "rear" is a per-installation setting (see TpmsSettings.frontMac /
+ * rearMac), configurable from the app's settings screen. This lets anyone
+ * pair a different physical pair of DJTPMS-protocol sensors without needing
+ * a code change or a new build.
  */
 object TpmsDecoder {
 
-    const val FRONT_MAC = "9C:7F:64:5B:2A:04"
-    const val REAR_MAC = "9C:7F:64:5B:2C:63"
+    // Defaults matching the sensors this app was originally built for.
+    // Only used the very first time the app runs, before the user has set
+    // their own sensor MACs in settings.
+    const val DEFAULT_FRONT_MAC = "9C:7F:64:5B:2A:04"
+    const val DEFAULT_REAR_MAC = "9C:7F:64:5B:2C:63"
 
     private const val PRESSURE_DIVISOR = 18.125f
     private const val TEMP_OFFSET = 87
@@ -36,20 +46,24 @@ object TpmsDecoder {
         val rawBytes: ByteArray
     )
 
-    fun positionForMac(mac: String): Position = when (mac.uppercase()) {
-        FRONT_MAC -> Position.FRONT
-        REAR_MAC -> Position.REAR
+    /**
+     * Determine whether [mac] matches the configured front or rear sensor
+     * address. [frontMac] / [rearMac] come from TpmsSettings (user-editable).
+     */
+    fun positionForMac(mac: String, frontMac: String, rearMac: String): Position = when (mac.uppercase()) {
+        frontMac.uppercase() -> Position.FRONT
+        rearMac.uppercase() -> Position.REAR
         else -> Position.UNKNOWN
     }
 
     /**
-     * Decode a 12-byte manufacturer data payload for a sensor identified by [mac].
-     * Returns null if the payload is too short to be a valid frame.
+     * Decode a 12-byte manufacturer data payload for a sensor already
+     * identified as [position] (via [positionForMac]). Returns null if the
+     * payload is too short to be a valid frame.
      */
-    fun decode(mac: String, data: ByteArray): TpmsReading? {
+    fun decode(position: Position, mac: String, data: ByteArray): TpmsReading? {
         if (data.size < 12) return null
 
-        val position = positionForMac(mac)
         val unsigned: (Int) -> Int = { idx -> data[idx].toInt() and 0xFF }
 
         val batteryRaw = unsigned(2)

@@ -152,13 +152,13 @@ class CustomDashboardView @JvmOverloads constructor(
     private val clockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textWhite
         textAlign = Paint.Align.CENTER
-        textSize = 78f
+        textSize = 118f
         typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
     }
     private val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = textGray
         textAlign = Paint.Align.CENTER
-        textSize = 34f
+        textSize = 51f
         letterSpacing = 0.15f
     }
 
@@ -213,8 +213,8 @@ class CustomDashboardView @JvmOverloads constructor(
 
         // Clock + date near top
         val now = Date()
-        canvas.drawText(clockFormat.format(now), centerX, 90f, clockPaint)
-        canvas.drawText(dateFormat.format(now).uppercase(Locale.getDefault()), centerX, 132f, datePaint)
+        canvas.drawText(clockFormat.format(now), centerX, 122f, clockPaint)
+        canvas.drawText(dateFormat.format(now).uppercase(Locale.getDefault()), centerX, 196f, datePaint)
 
         // Huge speed value, vertically centered
         val speedBaseline = h / 2f + 90f

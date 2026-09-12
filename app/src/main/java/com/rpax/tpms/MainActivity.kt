@@ -1,6 +1,5 @@
 package com.rpax.tpms
 
-import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import android.widget.CheckBox
@@ -15,6 +14,13 @@ import android.widget.Toast
 /**
  * Configuration screen for pressure/temperature thresholds and alert channels.
  * Built programmatically (no XML layout) to keep this file self-contained.
+ *
+ * This activity is only ever reached from DashboardActivity's on-screen
+ * settings (gear) icon, so it always sits directly on top of a
+ * DashboardActivity instance in the back stack. "Open Dashboard" therefore
+ * just finishes this screen -- returning to that existing instance -- rather
+ * than starting a brand new one, which would otherwise stack duplicate
+ * dashboards and require pressing Back repeatedly to fully exit.
  */
 class MainActivity : ComponentActivity() {
 
@@ -92,13 +98,15 @@ class MainActivity : ComponentActivity() {
         }
         layout.addView(saveButton)
 
-        val launchDashboardButton = Button(this).apply {
+        val backToDashboardButton = Button(this).apply {
             text = "Open Dashboard"
             setOnClickListener {
-                startActivity(Intent(this@MainActivity, DashboardActivity::class.java))
+                // Just close this screen -- the existing DashboardActivity
+                // underneath it in the back stack becomes visible again.
+                finish()
             }
         }
-        layout.addView(launchDashboardButton)
+        layout.addView(backToDashboardButton)
     }
 
     private fun saveSettings() {

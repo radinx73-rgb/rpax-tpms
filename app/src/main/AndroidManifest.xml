@@ -26,7 +26,7 @@
     <application
         android:name=".RpaxApplication"
         android:allowBackup="true"
-        android:icon="@drawable/ic_tpms_icon"
+        android:icon="@drawable/app_icon"
         android:label="RPax TPMS"
         android:theme="@style/Theme.RpaxTpms"
         android:supportsRtl="true">

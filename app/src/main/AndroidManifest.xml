@@ -48,6 +48,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="false"
+            android:screenOrientation="sensorLandscape"
             android:label="RPax TPMS Settings" />
 
         <service

@@ -31,10 +31,14 @@
         android:theme="@style/Theme.RpaxTpms"
         android:supportsRtl="true">
 
+        <!-- Launcher: opens straight to the dashboard. Settings is reached
+             only via the on-screen gear icon (DashboardActivity.onSettingsClick). -->
         <activity
-            android:name=".MainActivity"
+            android:name=".DashboardActivity"
             android:exported="true"
-            android:label="RPax TPMS Settings">
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.RpaxTpms.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -42,11 +46,9 @@
         </activity>
 
         <activity
-            android:name=".DashboardActivity"
+            android:name=".MainActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:theme="@style/Theme.RpaxTpms.Fullscreen" />
+            android:label="RPax TPMS Settings" />
 
         <service
             android:name=".BleScannerService"

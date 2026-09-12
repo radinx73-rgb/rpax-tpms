@@ -254,7 +254,7 @@ class CustomDashboardView @JvmOverloads constructor(
             statusBarTextPaint
         )
 
-        drawStatusBarIcons(canvas, statusRect)
+        drawStatusBarIcons(canvas, statusRect, statusPaint.color)
 
         // Motorcycle graphic area
         val motoTop = statusRect.bottom + 20f
@@ -277,55 +277,80 @@ class CustomDashboardView @JvmOverloads constructor(
     }
 
     /**
-     * Settings (gear) and exit (power) icons, drawn INSIDE the status bar so
-     * they're always a fixed, visible, easily-tappable size regardless of
-     * screen resolution (previous version anchored them to raw pixel offsets
-     * from the screen edge, which made them nearly invisible on high-res
-     * displays).
+     * Settings (gear) and exit (power) icons, drawn as white rounded-square
+     * buttons flush against the left and right ends of the status bar,
+     * sized to the bar's own height so they're always a clearly visible,
+     * easily-tappable target regardless of screen resolution. The glyph
+     * inside each button is tinted to match the bar's current color.
      */
-    private fun drawStatusBarIcons(canvas: Canvas, statusRect: RectF) {
-        val iconRadius = 16f * density
-        val margin = 20f * density
-        val iconCy = statusRect.centerY()
+    private fun drawStatusBarIcons(canvas: Canvas, statusRect: RectF, tintColor: Int) {
+        val margin = 6f * density
+        val buttonSize = statusRect.height() - margin * 2f
+        val cornerRadius = 10f * density
 
-        // Exit (power) icon: far right.
-        val exitCx = statusRect.right - margin - iconRadius
-        exitIconRect.set(
-            exitCx - iconRadius - 12f * density, iconCy - iconRadius - 12f * density,
-            exitCx + iconRadius + 12f * density, iconCy + iconRadius + 12f * density
-        )
-        canvas.drawCircle(exitCx, iconCy, iconRadius * 0.62f, iconStrokePaint)
-        canvas.drawLine(exitCx, iconCy - iconRadius * 0.75f, exitCx, iconCy - iconRadius * 0.1f, iconStrokePaint)
+        val whiteButtonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 3f * density
+            strokeCap = Paint.Cap.ROUND
+            color = tintColor
+        }
 
-        // Settings (gear) icon: just to the left of the exit icon.
-        val gearCx = exitCx - iconRadius * 2f - margin
-        settingsIconRect.set(
-            gearCx - iconRadius - 12f * density, iconCy - iconRadius - 12f * density,
-            gearCx + iconRadius + 12f * density, iconCy + iconRadius + 12f * density
+        // Left button: settings (gear)
+        val leftButtonRect = RectF(
+            statusRect.left + margin, statusRect.top + margin,
+            statusRect.left + margin + buttonSize, statusRect.bottom - margin
         )
-        canvas.drawCircle(gearCx, iconCy, iconRadius * 0.5f, iconStrokePaint)
+        settingsIconRect.set(leftButtonRect)
+        canvas.drawRoundRect(leftButtonRect, cornerRadius, cornerRadius, whiteButtonPaint)
+        drawGearGlyph(canvas, leftButtonRect.centerX(), leftButtonRect.centerY(), buttonSize * 0.32f, glyphPaint)
+
+        // Right button: exit (power)
+        val rightButtonRect = RectF(
+            statusRect.right - margin - buttonSize, statusRect.top + margin,
+            statusRect.right - margin, statusRect.bottom - margin
+        )
+        exitIconRect.set(rightButtonRect)
+        canvas.drawRoundRect(rightButtonRect, cornerRadius, cornerRadius, whiteButtonPaint)
+        canvas.drawCircle(rightButtonRect.centerX(), rightButtonRect.centerY(), buttonSize * 0.24f, glyphPaint)
+        canvas.drawLine(
+            rightButtonRect.centerX(), rightButtonRect.centerY() - buttonSize * 0.32f,
+            rightButtonRect.centerX(), rightButtonRect.centerY() - buttonSize * 0.04f,
+            glyphPaint
+        )
+    }
+
+    private fun drawGearGlyph(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+        canvas.drawCircle(cx, cy, radius * 0.5f, paint)
         val teeth = 8
         for (i in 0 until teeth) {
             val angle = (2 * Math.PI * i / teeth).toFloat()
-            val innerR = iconRadius * 0.65f
-            val outerR = iconRadius
-            val x1 = gearCx + innerR * Math.cos(angle.toDouble()).toFloat()
-            val y1 = iconCy + innerR * Math.sin(angle.toDouble()).toFloat()
-            val x2 = gearCx + outerR * Math.cos(angle.toDouble()).toFloat()
-            val y2 = iconCy + outerR * Math.sin(angle.toDouble()).toFloat()
-            canvas.drawLine(x1, y1, x2, y2, iconStrokePaint)
+            val innerR = radius * 0.65f
+            val outerR = radius
+            val x1 = cx + innerR * Math.cos(angle.toDouble()).toFloat()
+            val y1 = cy + innerR * Math.sin(angle.toDouble()).toFloat()
+            val x2 = cx + outerR * Math.cos(angle.toDouble()).toFloat()
+            val y2 = cy + outerR * Math.sin(angle.toDouble()).toFloat()
+            canvas.drawLine(x1, y1, x2, y2, paint)
         }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action == MotionEvent.ACTION_UP) {
-            if (settingsIconRect.contains(event.x, event.y)) {
-                onSettingsClick?.invoke()
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                // Must return true here or the framework never delivers the
+                // matching ACTION_UP to this view at all.
                 return true
             }
-            if (exitIconRect.contains(event.x, event.y)) {
-                onExitClick?.invoke()
-                return true
+            MotionEvent.ACTION_UP -> {
+                if (settingsIconRect.contains(event.x, event.y)) {
+                    onSettingsClick?.invoke()
+                    return true
+                }
+                if (exitIconRect.contains(event.x, event.y)) {
+                    onExitClick?.invoke()
+                    return true
+                }
             }
         }
         return super.onTouchEvent(event)

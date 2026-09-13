@@ -106,11 +106,13 @@ class CustomDashboardView @JvmOverloads constructor(
 
     // ---- Periodic ticker: keeps clock + stale-detection current even
     // without new sensor broadcasts ----
+    private var blinkPhase = true
     private val tickHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val tickRunnable = object : Runnable {
         override fun run() {
+            blinkPhase = !blinkPhase
             invalidate()
-            tickHandler.postDelayed(this, 1000L)
+            tickHandler.postDelayed(this, 500L)
         }
     }
 
@@ -234,7 +236,8 @@ class CustomDashboardView @JvmOverloads constructor(
         val statusRect = RectF(panelLeft, 18f, panelRight, 18f + statusBarHeight)
         val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = when {
-                anyAlert -> accentRed
+                anyAlert && blinkPhase -> accentRed
+                anyAlert -> Color.parseColor("#7A1F1F")
                 noDataYet -> accentAmber
                 else -> accentGreen
             }
@@ -565,14 +568,18 @@ class CustomDashboardView @JvmOverloads constructor(
         batteryOk: Boolean
     ) {
         val bgPaintTile = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (alert) Color.parseColor("#3A1414") else tileColor
+            color = when {
+                alert && blinkPhase -> Color.parseColor("#7A1F1F")
+                alert -> tileColor
+                else -> tileColor
+            }
         }
         canvas.drawRoundRect(rect, 16f, 16f, bgPaintTile)
 
         if (alert) {
             val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE
-                strokeWidth = 3f
+                strokeWidth = 4f
                 color = accentRed
             }
             canvas.drawRoundRect(rect, 16f, 16f, borderPaint)

@@ -57,6 +57,10 @@ class BleScannerService : Service() {
     private var lastRearAlert = false
     private var lastSpeedKmh = 0
 
+    private val alertHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val frontAlertRunnables = mutableListOf<Runnable>()
+    private val rearAlertRunnables = mutableListOf<Runnable>()
+
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val location: Location = result.lastLocation ?: return
@@ -111,6 +115,8 @@ class BleScannerService : Service() {
     override fun onDestroy() {
         stopScanning()
         stopLocationUpdates()
+        cancelAlertSequence(frontAlertRunnables)
+        cancelAlertSequence(rearAlertRunnables)
         soundPool?.release()
         soundPool = null
         super.onDestroy()
@@ -158,6 +164,8 @@ class BleScannerService : Service() {
         val payload = manufacturerData.valueAt(0) ?: return
         val reading = TpmsDecoder.decode(position, mac, payload) ?: return
 
+        RawFrameLog.record(position, mac, payload, reading.pressureBar, reading.temperatureC)
+
         processReading(reading)
     }
 
@@ -170,17 +178,40 @@ class BleScannerService : Service() {
 
         when (reading.position) {
             TpmsDecoder.Position.FRONT -> {
-                if (isAlert && !lastFrontAlert) triggerAlert("LOW FRONT PRESSURE")
+                if (isAlert && !lastFrontAlert) scheduleAlertSequence("LOW FRONT PRESSURE", frontAlertRunnables)
+                if (!isAlert && lastFrontAlert) cancelAlertSequence(frontAlertRunnables)
                 lastFrontAlert = isAlert
             }
             TpmsDecoder.Position.REAR -> {
-                if (isAlert && !lastRearAlert) triggerAlert("LOW REAR PRESSURE")
+                if (isAlert && !lastRearAlert) scheduleAlertSequence("LOW REAR PRESSURE", rearAlertRunnables)
+                if (!isAlert && lastRearAlert) cancelAlertSequence(rearAlertRunnables)
                 lastRearAlert = isAlert
             }
             TpmsDecoder.Position.UNKNOWN -> Unit
         }
 
         broadcastReading(reading, isAlert)
+    }
+
+    /**
+     * Fires [message] as an alert immediately, then twice more 30 and 60
+     * seconds later (three alerts total), unless cancelled early by
+     * [cancelAlertSequence] once the underlying condition resolves.
+     */
+    private fun scheduleAlertSequence(message: String, runnables: MutableList<Runnable>) {
+        cancelAlertSequence(runnables)
+        val repeatCount = 3
+        val intervalMs = 30_000L
+        for (i in 0 until repeatCount) {
+            val runnable = Runnable { triggerAlert(message) }
+            runnables.add(runnable)
+            alertHandler.postDelayed(runnable, i * intervalMs)
+        }
+    }
+
+    private fun cancelAlertSequence(runnables: MutableList<Runnable>) {
+        runnables.forEach { alertHandler.removeCallbacks(it) }
+        runnables.clear()
     }
 
     // ------------------------------------------------------------- Alerts

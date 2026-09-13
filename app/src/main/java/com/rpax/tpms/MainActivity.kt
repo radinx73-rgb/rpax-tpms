@@ -1,6 +1,8 @@
 package com.rpax.tpms
 
+import android.content.ContentValues
 import android.os.Bundle
+import android.provider.MediaStore
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -10,6 +12,9 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import android.view.Gravity
 import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Configuration screen for pressure/temperature thresholds and alert channels.
@@ -104,6 +109,14 @@ class MainActivity : ComponentActivity() {
         }
         layout.addView(watchCheck)
 
+        layout.addView(sectionTitle("Diagnostics"))
+
+        val exportLogButton = Button(this).apply {
+            text = "Export Raw BLE Log"
+            setOnClickListener { exportRawLog() }
+        }
+        layout.addView(exportLogButton)
+
         val saveButton = Button(this).apply {
             text = "Save"
             setOnClickListener { saveSettings() }
@@ -119,6 +132,40 @@ class MainActivity : ComponentActivity() {
             }
         }
         layout.addView(backToDashboardButton)
+    }
+
+    private fun exportRawLog() {
+        val lines = RawFrameLog.snapshot()
+        if (lines.isEmpty()) {
+            Toast.makeText(this, "No BLE frames captured yet -- ride a bit first", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+        val fileName = "rpax_ble_log_$timestamp.txt"
+        val content = lines.joinToString("\n")
+
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+
+        val resolver = applicationContext.contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        if (uri == null) {
+            Toast.makeText(this, "Failed to create log file", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        resolver.openOutputStream(uri)?.use { out ->
+            out.write(content.toByteArray(Charsets.UTF_8))
+        }
+        values.clear()
+        values.put(MediaStore.Downloads.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+
+        Toast.makeText(this, "Saved to Download/$fileName", Toast.LENGTH_LONG).show()
     }
 
     private fun saveSettings() {

@@ -1,19 +1,23 @@
 package com.rpax.tpms
 
 /**
- * Decoder for DJTPMS-style 12-byte Manufacturer Specific Data frames.
+ * Decoder for this DJTPMS-style 12-byte Manufacturer Specific Data frame.
  *
- * Frame layout (indices 0..11):
- *   [0] pressure raw (front sensor primary field, rear sensor primary field)
- *   [1] reserved / sequence
- *   [2] battery status (0x01 = OK)
- *   [3] pressure raw (rear sensor secondary field, used with status flag)
- *   [4] reserved
- *   [5] temperature raw, offset -87 -> deg C
- *   [6..11] reserved / sensor id tail
+ * Frame layout (indices 0..11), reverse-engineered from real calibration
+ * data (multiple known pressures and temperatures captured against raw
+ * frames from both sensors):
+ *   [0] constant/session/model byte -- not used
+ *   [1] temperature, directly in whole degrees Celsius (no offset)
+ *   [2] status flag -- previously assumed "battery OK" when == 0x01;
+ *       real-world testing left this only partially confirmed
+ *   [3] pressure ADC reading, 8-bit, wraps around every 256 counts
+ *       (see decode() for the unwrap + linear formula)
+ *   [4] always observed as 0x00 -- reserved, not used
+ *   [5] does not correlate with any known reference value -- not used
+ *   [6..11] the sensor's own MAC address, echoed back in the payload
  *
- * Pressure conversion: bar = rawByte / 18.125f
- * Temperature conversion: celsius = rawByte - 87
+ * Identical formula applies to both front and rear sensors -- there is no
+ * position-specific special-casing needed.
  *
  * Sensor MAC addresses are NOT hardcoded here -- every physical BLE sensor
  * has its own unique factory MAC, so which two addresses count as "front"
@@ -30,10 +34,10 @@ object TpmsDecoder {
     const val DEFAULT_FRONT_MAC = "9C:7F:64:5B:2A:04"
     const val DEFAULT_REAR_MAC = "9C:7F:64:5B:2C:63"
 
-    private const val PRESSURE_DIVISOR = 18.125f
-    private const val TEMP_OFFSET = 87
+    private const val PRESSURE_SLOPE = 0.01116f
+    private const val PRESSURE_INTERCEPT = -1.209f
+    private const val PRESSURE_WRAP_THRESHOLD = 130
     private const val BATTERY_OK: Int = 0x01
-    private const val REAR_STATUS_FLAG = 0x53
 
     enum class Position { FRONT, REAR, UNKNOWN }
 
@@ -60,6 +64,25 @@ object TpmsDecoder {
      * Decode a 12-byte manufacturer data payload for a sensor already
      * identified as [position] (via [positionForMac]). Returns null if the
      * payload is too short to be a valid frame.
+     *
+     * Byte layout, reverse-engineered from real calibration data (multiple
+     * known pressures/temperatures captured against raw frames -- see
+     * project notes for the underlying measurements):
+     *   [0] appears to be a constant/session/model byte -- not used
+     *   [1] temperature, directly in whole degrees Celsius (no offset)
+     *   [2] status flag, meaning not fully confirmed (previously assumed
+     *       "battery OK" when == 0x01; kept as a best-effort indicator)
+     *   [3] pressure ADC reading, 8-bit, WRAPS AROUND every 256 counts.
+     *       Formula: bar = PRESSURE_SLOPE * raw + PRESSURE_INTERCEPT, where
+     *       raw has 256 added if the raw byte is below PRESSURE_WRAP_THRESHOLD
+     *       (empirically, real raw values for pressures above ~1.6 bar wrap
+     *       below that threshold). Identical formula for front and rear --
+     *       there is no special-casing needed between sensor positions.
+     *   [4] always observed as 0x00 -- reserved, not used
+     *   [5] varies without correlating to any known reference value in
+     *       calibration data -- not used (previously wrongly assumed to be
+     *       temperature)
+     *   [6..11] the sensor's own MAC address, echoed back in the payload
      */
     fun decode(position: Position, mac: String, data: ByteArray): TpmsReading? {
         if (data.size < 12) return null
@@ -69,32 +92,15 @@ object TpmsDecoder {
         val batteryRaw = unsigned(2)
         val batteryOk = batteryRaw == BATTERY_OK
 
-        val tempRaw = unsigned(5)
-        val temperatureC = tempRaw - TEMP_OFFSET
+        val temperatureC = unsigned(1)
 
-        val pressureBar: Float = when (position) {
-            Position.FRONT -> {
-                val raw0 = unsigned(0)
-                raw0 / PRESSURE_DIVISOR
-            }
-            Position.REAR -> {
-                // Rear sensor may report the live value in byte 0 or byte 3.
-                // Byte 3 carries a status flag (0x53) that indicates the
-                // "confirmed" reading channel, used to disambiguate cases
-                // like 2.4 bar where byte 0 alone would be ambiguous.
-                val raw0 = unsigned(0)
-                val raw3 = unsigned(3)
-                val statusFlag = unsigned(1)
-
-                val chosenRaw = if (statusFlag == REAR_STATUS_FLAG || raw3 in 1..255) {
-                    if (raw3 > 0) raw3 else raw0
-                } else {
-                    raw0
-                }
-                chosenRaw / PRESSURE_DIVISOR
-            }
-            Position.UNKNOWN -> unsigned(0) / PRESSURE_DIVISOR
+        val rawPressureByte = unsigned(3)
+        val effectiveRaw = if (rawPressureByte < PRESSURE_WRAP_THRESHOLD) {
+            rawPressureByte + 256
+        } else {
+            rawPressureByte
         }
+        val pressureBar = PRESSURE_SLOPE * effectiveRaw + PRESSURE_INTERCEPT
 
         return TpmsReading(
             position = position,

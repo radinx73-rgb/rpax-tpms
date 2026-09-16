@@ -65,6 +65,15 @@ class BleScannerService : Service() {
     private var pairingPosition: TpmsDecoder.Position? = null
     private var pairingTimeoutRunnable: Runnable? = null
 
+    // Counts consecutive onScanFailed calls, reset on every successful scan
+    // result. Used to back off before restarting the scan -- an immediate
+    // restart on every failure risks tripping Android's own
+    // SCAN_FAILED_SCANNING_TOO_FREQUENTLY throttle again, making things
+    // worse instead of better (matches the observed pattern of frames
+    // arriving less and less often over time, rather than stopping outright).
+    private var scanFailureCount = 0
+    private var scanRestartRunnable: Runnable? = null
+
     private val alertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val frontAlertRunnables = mutableListOf<Runnable>()
     private val rearAlertRunnables = mutableListOf<Runnable>()
@@ -88,8 +97,13 @@ class BleScannerService : Service() {
         }
 
         override fun onScanFailed(errorCode: Int) {
+            scanFailureCount++
             stopScanning()
-            startScanning()
+            scanRestartRunnable?.let { alertHandler.removeCallbacks(it) }
+            val backoffMs = (2_000L * scanFailureCount).coerceAtMost(30_000L)
+            val restartRunnable = Runnable { startScanning() }
+            scanRestartRunnable = restartRunnable
+            alertHandler.postDelayed(restartRunnable, backoffMs)
         }
     }
 
@@ -139,6 +153,8 @@ class BleScannerService : Service() {
 
     override fun onDestroy() {
         stopScanning()
+        scanRestartRunnable?.let { alertHandler.removeCallbacks(it) }
+        scanRestartRunnable = null
         stopLocationUpdates()
         cancelPairing(notifyTimeout = false)
         cancelAlertSequence(frontAlertRunnables)
@@ -180,6 +196,7 @@ class BleScannerService : Service() {
     }
 
     private fun handleScanResult(result: ScanResult) {
+        scanFailureCount = 0
         val mac = result.device.address ?: return
 
         val manufacturerData = result.scanRecord?.manufacturerSpecificData ?: return

@@ -1,6 +1,11 @@
 package com.rpax.tpms
 
+import android.content.BroadcastReceiver
 import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Button
@@ -41,6 +46,34 @@ class MainActivity : ComponentActivity() {
     private lateinit var soundCheck: CheckBox
     private lateinit var vibeCheck: CheckBox
     private lateinit var watchCheck: CheckBox
+    private lateinit var frontPairButton: Button
+    private lateinit var rearPairButton: Button
+    private val pairingBlinkHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pairingBlinkRunnable: Runnable? = null
+
+    private val pairingReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                BleScannerService.ACTION_PAIRING_RESULT -> {
+                    val mac = intent.getStringExtra(BleScannerService.EXTRA_PAIRING_MAC) ?: return
+                    when (intent.getStringExtra(BleScannerService.EXTRA_PAIRING_POSITION)) {
+                        TpmsDecoder.Position.FRONT.name -> frontMacInput.setText(mac)
+                        TpmsDecoder.Position.REAR.name -> rearMacInput.setText(mac)
+                    }
+                    Toast.makeText(this@MainActivity, "Sparowano czujnik: $mac", Toast.LENGTH_LONG).show()
+                    setPairingButtonsEnabled(true)
+                }
+                BleScannerService.ACTION_PAIRING_TIMEOUT -> {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Nie znaleziono nowego czujnika -- spróbuj ponownie",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    setPairingButtonsEnabled(true)
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,13 +89,27 @@ class MainActivity : ComponentActivity() {
 
         layout.addView(sectionTitle("RPax TPMS — Sensor Pairing"))
 
-        layout.addView(fieldLabel("Front sensor MAC (e.g. 9C:7F:64:5B:2A:04)"))
+        layout.addView(fieldLabel("Front sensor MAC"))
         frontMacInput = macInput(settings.frontMac)
         layout.addView(frontMacInput)
 
-        layout.addView(fieldLabel("Rear sensor MAC (e.g. 9C:7F:64:5B:2C:63)"))
+        frontPairButton = Button(this).apply {
+            text = "Paruj czujnik PRZÓD"
+            setOnClickListener { beginPairing(TpmsDecoder.Position.FRONT, this) }
+            setOnLongClickListener { unbindSensor(TpmsDecoder.Position.FRONT); true }
+        }
+        layout.addView(frontPairButton)
+
+        layout.addView(fieldLabel("Rear sensor MAC"))
         rearMacInput = macInput(settings.rearMac)
         layout.addView(rearMacInput)
+
+        rearPairButton = Button(this).apply {
+            text = "Paruj czujnik TYŁ"
+            setOnClickListener { beginPairing(TpmsDecoder.Position.REAR, this) }
+            setOnLongClickListener { unbindSensor(TpmsDecoder.Position.REAR); true }
+        }
+        layout.addView(rearPairButton)
 
         layout.addView(sectionTitle("Thresholds"))
 
@@ -132,6 +179,115 @@ class MainActivity : ComponentActivity() {
             }
         }
         layout.addView(backToDashboardButton)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter().apply {
+            addAction(BleScannerService.ACTION_PAIRING_RESULT)
+            addAction(BleScannerService.ACTION_PAIRING_TIMEOUT)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(pairingReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(pairingReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        stopPairingBlink()
+        unregisterReceiver(pairingReceiver)
+    }
+
+    /**
+     * Puts BleScannerService into pairing mode for [position]. The service
+     * is guaranteed to already be running -- this activity is only ever
+     * reached from DashboardActivity's gear icon (see class doc comment),
+     * and Dashboard starts the service -- so this just flips a mode flag,
+     * it doesn't need to (re)start scanning itself.
+     */
+    private fun beginPairing(position: TpmsDecoder.Position, sourceButton: Button) {
+        setPairingButtonsEnabled(false)
+        sourceButton.text = "Nakręć czujnik na wentyl... (60s)"
+        startPairingBlink(sourceButton)
+        val intent = Intent(this, BleScannerService::class.java).apply {
+            action = BleScannerService.ACTION_START_PAIRING
+            putExtra(BleScannerService.EXTRA_PAIRING_POSITION, position.name)
+        }
+        startService(intent)
+        Toast.makeText(
+            this,
+            "Tryb parowania: nakręć czujnik ${if (position == TpmsDecoder.Position.FRONT) "PRZÓD" else "TYŁ"} na wentyl",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    private fun setPairingButtonsEnabled(enabled: Boolean) {
+        stopPairingBlink()
+        frontPairButton.isEnabled = enabled
+        rearPairButton.isEnabled = enabled
+        if (enabled) {
+            frontPairButton.text = "Paruj czujnik PRZÓD"
+            rearPairButton.text = "Paruj czujnik TYŁ"
+        }
+    }
+
+    /**
+     * Visual "listening..." cue while pairing is in progress -- pulses the
+     * button's alpha, same idea as the reference app's flicker thread on
+     * the wheel icon, just applied to this screen instead of the dashboard
+     * (which isn't visible right now, since this activity sits on top of it).
+     */
+    private fun startPairingBlink(button: Button) {
+        stopPairingBlink()
+        val runnable = object : Runnable {
+            var visible = true
+            override fun run() {
+                visible = !visible
+                button.alpha = if (visible) 1f else 0.35f
+                pairingBlinkHandler.postDelayed(this, 400L)
+            }
+        }
+        pairingBlinkRunnable = runnable
+        pairingBlinkHandler.post(runnable)
+    }
+
+    private fun stopPairingBlink() {
+        pairingBlinkRunnable?.let { pairingBlinkHandler.removeCallbacks(it) }
+        pairingBlinkRunnable = null
+        frontPairButton.alpha = 1f
+        rearPairButton.alpha = 1f
+    }
+
+    /**
+     * Long-press: cancels any in-progress pairing and clears this position's
+     * MAC, so BleScannerService stops matching readings to it until it's
+     * paired again (mirrors the reference app's long-press unbind).
+     */
+    private fun unbindSensor(position: TpmsDecoder.Position) {
+        val intent = Intent(this, BleScannerService::class.java).apply {
+            action = BleScannerService.ACTION_CANCEL_PAIRING
+        }
+        startService(intent)
+        setPairingButtonsEnabled(true)
+
+        val label: String
+        when (position) {
+            TpmsDecoder.Position.FRONT -> {
+                settings.frontMac = ""
+                frontMacInput.setText("")
+                label = "PRZÓD"
+            }
+            TpmsDecoder.Position.REAR -> {
+                settings.rearMac = ""
+                rearMacInput.setText("")
+                label = "TYŁ"
+            }
+            TpmsDecoder.Position.UNKNOWN -> label = ""
+        }
+        Toast.makeText(this, "Odwiązano czujnik $label", Toast.LENGTH_SHORT).show()
     }
 
     private fun exportRawLog() {

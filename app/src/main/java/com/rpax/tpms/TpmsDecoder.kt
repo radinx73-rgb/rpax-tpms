@@ -17,9 +17,6 @@ package com.rpax.tpms
  */
 object TpmsDecoder {
 
-    const val DEFAULT_FRONT_MAC = "9C:7F:64:5B:2A:04"
-    const val DEFAULT_REAR_MAC = "9C:7F:64:5B:2C:63"
-
     // Próg wykrywania "zawinięcia" 8-bitowego ADC ciśnienia: gdy surowy
     // odczyt spadnie poniżej tej wartości, oznacza to, że licznik
     // przekręcił się przez 255 -> 0, więc doliczamy 256, aby zachować

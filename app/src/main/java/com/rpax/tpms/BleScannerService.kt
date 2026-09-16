@@ -57,6 +57,14 @@ class BleScannerService : Service() {
     private var lastRearAlert = false
     private var lastSpeedKmh = 0
 
+    // Sensor pairing/acquisition state. When non-null, handleScanResult()
+    // treats the *next* valid DJTPMS frame from an unassigned MAC (i.e. not
+    // the sensor already paired to the other position) as the sensor for
+    // this position, and binds it -- no hub/module to command, since these
+    // sensors broadcast advertisements directly and we're already scanning.
+    private var pairingPosition: TpmsDecoder.Position? = null
+    private var pairingTimeoutRunnable: Runnable? = null
+
     private val alertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val frontAlertRunnables = mutableListOf<Runnable>()
     private val rearAlertRunnables = mutableListOf<Runnable>()
@@ -97,6 +105,23 @@ class BleScannerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_START_PAIRING -> {
+                val positionName = intent.getStringExtra(EXTRA_PAIRING_POSITION)
+                val position = positionName?.let {
+                    runCatching { TpmsDecoder.Position.valueOf(it) }.getOrNull()
+                }
+                if (position != null && position != TpmsDecoder.Position.UNKNOWN) {
+                    startPairing(position)
+                }
+                return START_STICKY
+            }
+            ACTION_CANCEL_PAIRING -> {
+                cancelPairing(notifyTimeout = false)
+                return START_STICKY
+            }
+        }
+
         val notification = buildForegroundNotification("RPax TPMS active", "Monitoring tire pressure")
         ServiceCompat.startForeground(
             this,
@@ -115,6 +140,7 @@ class BleScannerService : Service() {
     override fun onDestroy() {
         stopScanning()
         stopLocationUpdates()
+        cancelPairing(notifyTimeout = false)
         cancelAlertSequence(frontAlertRunnables)
         cancelAlertSequence(rearAlertRunnables)
         soundPool?.release()
@@ -155,18 +181,88 @@ class BleScannerService : Service() {
 
     private fun handleScanResult(result: ScanResult) {
         val mac = result.device.address ?: return
-        val position = TpmsDecoder.positionForMac(mac, settings.frontMac, settings.rearMac)
-        if (position == TpmsDecoder.Position.UNKNOWN) return
 
         val manufacturerData = result.scanRecord?.manufacturerSpecificData ?: return
         if (manufacturerData.size() == 0) return
-
         val payload = manufacturerData.valueAt(0) ?: return
+
+        val currentPairing = pairingPosition
+        if (currentPairing != null && tryAcceptPairingCandidate(currentPairing, mac, payload)) {
+            return
+        }
+
+        val position = TpmsDecoder.positionForMac(mac, settings.frontMac, settings.rearMac)
+        if (position == TpmsDecoder.Position.UNKNOWN) return
+
         val reading = TpmsDecoder.decode(position, mac, payload) ?: return
 
         RawFrameLog.record(position, mac, payload, reading.pressureBar, reading.temperatureC)
 
         processReading(reading)
+    }
+
+    /**
+     * While [position] is being paired, binds the first MAC that (a) isn't
+     * already the sensor paired to the *other* position, and (b) decodes as
+     * a plausible DJTPMS frame (length check in TpmsDecoder.decode) -- so we
+     * don't accidentally pair with an unrelated nearby BLE device. Returns
+     * true if this scan result was consumed by pairing (whether accepted or
+     * still just "not a match yet"), so the caller skips normal processing
+     * for it either way.
+     */
+    private fun tryAcceptPairingCandidate(
+        position: TpmsDecoder.Position,
+        mac: String,
+        payload: ByteArray
+    ): Boolean {
+        val otherMac = if (position == TpmsDecoder.Position.FRONT) settings.rearMac else settings.frontMac
+        if (mac.equals(otherMac, ignoreCase = true)) return false
+
+        if (TpmsDecoder.decode(position, mac, payload) == null) return false
+
+        when (position) {
+            TpmsDecoder.Position.FRONT -> settings.frontMac = mac
+            TpmsDecoder.Position.REAR -> settings.rearMac = mac
+            TpmsDecoder.Position.UNKNOWN -> Unit
+        }
+        broadcastPairingResult(position, mac)
+        cancelPairing(notifyTimeout = false)
+        return true
+    }
+
+    private fun startPairing(position: TpmsDecoder.Position) {
+        pairingTimeoutRunnable?.let { alertHandler.removeCallbacks(it) }
+        pairingPosition = position
+        val timeoutRunnable = Runnable { cancelPairing(notifyTimeout = true) }
+        pairingTimeoutRunnable = timeoutRunnable
+        alertHandler.postDelayed(timeoutRunnable, PAIRING_TIMEOUT_MS)
+    }
+
+    private fun cancelPairing(notifyTimeout: Boolean) {
+        val wasPairing = pairingPosition
+        pairingTimeoutRunnable?.let { alertHandler.removeCallbacks(it) }
+        pairingTimeoutRunnable = null
+        pairingPosition = null
+        if (notifyTimeout && wasPairing != null) {
+            broadcastPairingTimeout(wasPairing)
+        }
+    }
+
+    private fun broadcastPairingResult(position: TpmsDecoder.Position, mac: String) {
+        val intent = Intent(ACTION_PAIRING_RESULT).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_PAIRING_POSITION, position.name)
+            putExtra(EXTRA_PAIRING_MAC, mac)
+        }
+        sendBroadcast(intent)
+    }
+
+    private fun broadcastPairingTimeout(position: TpmsDecoder.Position) {
+        val intent = Intent(ACTION_PAIRING_TIMEOUT).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_PAIRING_POSITION, position.name)
+        }
+        sendBroadcast(intent)
     }
 
     private fun processReading(reading: TpmsDecoder.TpmsReading) {
@@ -355,6 +451,10 @@ class BleScannerService : Service() {
     companion object {
         const val ACTION_TPMS_UPDATE = "com.rpax.tpms.ACTION_TPMS_UPDATE"
         const val ACTION_SPEED_UPDATE = "com.rpax.tpms.ACTION_SPEED_UPDATE"
+        const val ACTION_START_PAIRING = "com.rpax.tpms.ACTION_START_PAIRING"
+        const val ACTION_CANCEL_PAIRING = "com.rpax.tpms.ACTION_CANCEL_PAIRING"
+        const val ACTION_PAIRING_RESULT = "com.rpax.tpms.ACTION_PAIRING_RESULT"
+        const val ACTION_PAIRING_TIMEOUT = "com.rpax.tpms.ACTION_PAIRING_TIMEOUT"
 
         const val EXTRA_POSITION = "extra_position"
         const val EXTRA_PRESSURE = "extra_pressure"
@@ -362,6 +462,10 @@ class BleScannerService : Service() {
         const val EXTRA_BATTERY_OK = "extra_battery_ok"
         const val EXTRA_ALERT = "extra_alert"
         const val EXTRA_SPEED = "extra_speed"
+        const val EXTRA_PAIRING_POSITION = "extra_pairing_position"
+        const val EXTRA_PAIRING_MAC = "extra_pairing_mac"
+
+        private const val PAIRING_TIMEOUT_MS = 60_000L
 
         private const val NOTIFICATION_ID = 1001
         private const val ALERT_NOTIFICATION_ID = 1002

@@ -5,8 +5,10 @@ import android.content.SharedPreferences
 
 /**
  * Persists user-configurable alert thresholds, sensor MAC addresses, and
- * unit preferences. Defaults are tuned for a Kawasaki VN800 Classic (cold
- * pressure spec ~2.25 bar F/R) and this app's original pair of sensors.
+ * unit preferences. Pressure/temp defaults are tuned for a Kawasaki VN800
+ * Classic (cold pressure spec ~2.25 bar F/R); sensor MACs have no hardcoded
+ * default -- they start empty ("not paired") until set via the pairing
+ * flow or typed in manually.
  */
 class TpmsSettings(context: Context) {
 
@@ -37,12 +39,16 @@ class TpmsSettings(context: Context) {
     // sensors can be paired here without touching code -- each real sensor
     // has its own unique factory MAC, so this is what actually distinguishes
     // "this person's front sensor" from anyone else's.
+    // Empty string means "not paired yet" -- BleScannerService's
+    // positionForMac() never matches an empty MAC against a real scan
+    // result, and CustomDashboardView already shows "-- bar / -- °C"
+    // until a reading actually arrives, so this is a safe default.
     var frontMac: String
-        get() = prefs.getString(KEY_FRONT_MAC, TpmsDecoder.DEFAULT_FRONT_MAC) ?: TpmsDecoder.DEFAULT_FRONT_MAC
+        get() = prefs.getString(KEY_FRONT_MAC, "") ?: ""
         set(value) = prefs.edit().putString(KEY_FRONT_MAC, value.trim().uppercase()).apply()
 
     var rearMac: String
-        get() = prefs.getString(KEY_REAR_MAC, TpmsDecoder.DEFAULT_REAR_MAC) ?: TpmsDecoder.DEFAULT_REAR_MAC
+        get() = prefs.getString(KEY_REAR_MAC, "") ?: ""
         set(value) = prefs.edit().putString(KEY_REAR_MAC, value.trim().uppercase()).apply()
 
     var soundAlertsEnabled: Boolean

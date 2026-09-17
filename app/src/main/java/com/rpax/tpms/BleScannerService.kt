@@ -16,9 +16,7 @@ import android.location.Location
 import android.media.AudioAttributes
 import android.media.SoundPool
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -34,10 +32,20 @@ import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.NodeClient
 import com.google.android.gms.wearable.Wearable
 
+/**
+ * Foreground service that:
+ *  - Scans BLE advertisements from the two configured DJTPMS sensors
+ *    (front/rear MAC addresses come from TpmsSettings, editable in the
+ *    app's settings screen -- not hardcoded, so any pair of DJTPMS-protocol
+ *    sensors can be paired without a code change)
+ *  - Tracks GPS speed via FusedLocationProviderClient
+ *  - Raises audible / haptic / Wear OS alerts when thresholds are exceeded
+ *  - Broadcasts decoded readings to DashboardActivity via intents
+ */
 class BleScannerService : Service() {
 
     private lateinit var settings: TpmsSettings
-    private var bleScanner: BluetoothLeScanner? = null
+    private lateinit var bleScanner: BluetoothLeScanner
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var vibrator: Vibrator
     private var soundPool: SoundPool? = null
@@ -49,13 +57,35 @@ class BleScannerService : Service() {
     private var lastRearAlert = false
     private var lastSpeedKmh = 0
 
+    // Sensor pairing/acquisition state. When non-null, handleScanResult()
+    // treats the *next* valid DJTPMS frame from an unassigned MAC (i.e. not
+    // the sensor already paired to the other position) as the sensor for
+    // this position, and binds it -- no hub/module to command, since these
+    // sensors broadcast advertisements directly and we're already scanning.
     private var pairingPosition: TpmsDecoder.Position? = null
     private var pairingTimeoutRunnable: Runnable? = null
 
+    // Counts consecutive onScanFailed calls, reset on every successful scan
+    // result. Used to back off before restarting the scan -- an immediate
+    // restart on every failure risks tripping Android's own
+    // SCAN_FAILED_SCANNING_TOO_FREQUENTLY throttle again, making things
+    // worse instead of better (matches the observed pattern of frames
+    // arriving less and less often over time, rather than stopping outright).
     private var scanFailureCount = 0
     private var scanRestartRunnable: Runnable? = null
 
-    private val alertHandler = Handler(Looper.getMainLooper())
+    // Outlier filter: a single implausible jump in pressure/temperature
+    // (e.g. a corrupted frame slipping past the length check) is held back
+    // as a "pending" candidate instead of being shown immediately. It's
+    // only accepted once a second, consecutive frame confirms the same new
+    // value -- a real physical change will keep reporting it, a one-off
+    // glitch won't repeat identically.
+    private var lastConfirmedFront: TpmsDecoder.TpmsReading? = null
+    private var lastConfirmedRear: TpmsDecoder.TpmsReading? = null
+    private var pendingFront: TpmsDecoder.TpmsReading? = null
+    private var pendingRear: TpmsDecoder.TpmsReading? = null
+
+    private val alertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val frontAlertRunnables = mutableListOf<Runnable>()
     private val rearAlertRunnables = mutableListOf<Runnable>()
 
@@ -100,17 +130,6 @@ class BleScannerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildForegroundNotification("RPax TPMS aktywny", "Monitorowanie ciśnienia w kołach")
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            notification,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            else 0
-        )
-
         when (intent?.action) {
             ACTION_START_PAIRING -> {
                 val positionName = intent.getStringExtra(EXTRA_PAIRING_POSITION)
@@ -120,16 +139,26 @@ class BleScannerService : Service() {
                 if (position != null && position != TpmsDecoder.Position.UNKNOWN) {
                     startPairing(position)
                 }
+                return START_STICKY
             }
             ACTION_CANCEL_PAIRING -> {
                 cancelPairing(notifyTimeout = false)
-            }
-            else -> {
-                startScanning()
-                startLocationUpdates()
+                return START_STICKY
             }
         }
 
+        val notification = buildForegroundNotification("RPax TPMS active", "Monitoring tire pressure")
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            notification,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            else 0
+        )
+        startScanning()
+        startLocationUpdates()
         return START_STICKY
     }
 
@@ -148,6 +177,8 @@ class BleScannerService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // ---------------------------------------------------------------- BLE
+
     private fun startScanning() {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = bluetoothManager.adapter ?: return
@@ -159,15 +190,19 @@ class BleScannerService : Service() {
             .build()
 
         try {
-            bleScanner?.startScan(null, scanSettings, scanCallback)
+            bleScanner.startScan(null, scanSettings, scanCallback)
         } catch (_: SecurityException) {
+            // Missing BLUETOOTH_SCAN permission; nothing to do until re-granted.
         }
     }
 
     private fun stopScanning() {
         try {
-            bleScanner?.stopScan(scanCallback)
+            if (::bleScanner.isInitialized) {
+                bleScanner.stopScan(scanCallback)
+            }
         } catch (_: SecurityException) {
+            // Ignore; scan already inactive.
         }
     }
 
@@ -180,9 +215,8 @@ class BleScannerService : Service() {
         val payload = manufacturerData.valueAt(0) ?: return
 
         val currentPairing = pairingPosition
-        if (currentPairing != null) {
-            val accepted = tryAcceptPairingCandidate(currentPairing, mac, payload)
-            if (accepted) return
+        if (currentPairing != null && tryAcceptPairingCandidate(currentPairing, mac, payload)) {
+            return
         }
 
         val position = TpmsDecoder.positionForMac(mac, settings.frontMac, settings.rearMac)
@@ -190,11 +224,86 @@ class BleScannerService : Service() {
 
         val reading = TpmsDecoder.decode(position, mac, payload) ?: return
 
+        // Always log the raw frame, even one the outlier filter below ends
+        // up rejecting -- that's exactly what makes a glitch like a single
+        // wild temperature/pressure spike diagnosable afterwards.
         RawFrameLog.record(position, mac, payload, reading.pressureBar, reading.temperatureC)
 
-        processReading(reading)
+        val accepted = filterOutlier(reading) ?: return
+        processReading(accepted)
     }
 
+    /**
+     * Returns [reading] if it's plausible given the last confirmed value for
+     * its position, or if it matches a pending candidate from the previous
+     * frame (two consecutive agreeing readings = accept as a real change).
+     * Otherwise stores it as the new pending candidate and returns null,
+     * holding it back from the UI/alerts for one frame.
+     */
+    private fun filterOutlier(reading: TpmsDecoder.TpmsReading): TpmsDecoder.TpmsReading? {
+        val lastConfirmed = when (reading.position) {
+            TpmsDecoder.Position.FRONT -> lastConfirmedFront
+            TpmsDecoder.Position.REAR -> lastConfirmedRear
+            TpmsDecoder.Position.UNKNOWN -> null
+        }
+
+        if (isPlausibleJump(lastConfirmed, reading)) {
+            setConfirmed(reading)
+            setPending(reading.position, null)
+            return reading
+        }
+
+        val pending = when (reading.position) {
+            TpmsDecoder.Position.FRONT -> pendingFront
+            TpmsDecoder.Position.REAR -> pendingRear
+            TpmsDecoder.Position.UNKNOWN -> null
+        }
+
+        if (pending != null &&
+            kotlin.math.abs(reading.pressureBar - pending.pressureBar) <= PENDING_MATCH_PRESSURE_TOLERANCE &&
+            reading.temperatureC == pending.temperatureC
+        ) {
+            setConfirmed(reading)
+            setPending(reading.position, null)
+            return reading
+        }
+
+        setPending(reading.position, reading)
+        return null
+    }
+
+    private fun isPlausibleJump(previous: TpmsDecoder.TpmsReading?, candidate: TpmsDecoder.TpmsReading): Boolean {
+        val prev = previous ?: return true
+        val pressureDelta = kotlin.math.abs(candidate.pressureBar - prev.pressureBar)
+        val tempDelta = kotlin.math.abs(candidate.temperatureC - prev.temperatureC)
+        return pressureDelta <= MAX_PLAUSIBLE_PRESSURE_JUMP && tempDelta <= MAX_PLAUSIBLE_TEMP_JUMP
+    }
+
+    private fun setConfirmed(reading: TpmsDecoder.TpmsReading) {
+        when (reading.position) {
+            TpmsDecoder.Position.FRONT -> lastConfirmedFront = reading
+            TpmsDecoder.Position.REAR -> lastConfirmedRear = reading
+            TpmsDecoder.Position.UNKNOWN -> Unit
+        }
+    }
+
+    private fun setPending(position: TpmsDecoder.Position, reading: TpmsDecoder.TpmsReading?) {
+        when (position) {
+            TpmsDecoder.Position.FRONT -> pendingFront = reading
+            TpmsDecoder.Position.REAR -> pendingRear = reading
+            TpmsDecoder.Position.UNKNOWN -> Unit
+        }
+    }
+
+    /**
+     * While [position] is being paired, binds the first MAC that (a) isn't
+     * already the sensor paired to the *other* position, and (b) decodes as
+     * a plausible DJTPMS frame (length check in TpmsDecoder.decode) -- so we
+     * don't accidentally pair with an unrelated nearby BLE device. Returns
+     * true if this scan result was consumed by pairing (whether accepted or
+     * still just "not a match yet"), so the caller skips normal processing
+     * for it either way.
+     */
     private fun tryAcceptPairingCandidate(
         position: TpmsDecoder.Position,
         mac: String,
@@ -203,20 +312,15 @@ class BleScannerService : Service() {
         val otherMac = if (position == TpmsDecoder.Position.FRONT) settings.rearMac else settings.frontMac
         if (mac.equals(otherMac, ignoreCase = true)) return false
 
-        val decoded = TpmsDecoder.decode(position, mac, payload) ?: return false
+        if (TpmsDecoder.decode(position, mac, payload) == null) return false
 
         when (position) {
             TpmsDecoder.Position.FRONT -> settings.frontMac = mac
             TpmsDecoder.Position.REAR -> settings.rearMac = mac
-            TpmsDecoder.Position.UNKNOWN -> return false
+            TpmsDecoder.Position.UNKNOWN -> Unit
         }
-
         broadcastPairingResult(position, mac)
         cancelPairing(notifyTimeout = false)
-        
-        RawFrameLog.record(position, mac, payload, decoded.pressureBar, decoded.temperatureC)
-        processReading(decoded)
-        
         return true
     }
 
@@ -264,12 +368,12 @@ class BleScannerService : Service() {
 
         when (reading.position) {
             TpmsDecoder.Position.FRONT -> {
-                if (isAlert && !lastFrontAlert) scheduleAlertSequence("NISKIE CIŚNIENIE PRZÓD", frontAlertRunnables)
+                if (isAlert && !lastFrontAlert) scheduleAlertSequence("LOW FRONT PRESSURE", frontAlertRunnables)
                 if (!isAlert && lastFrontAlert) cancelAlertSequence(frontAlertRunnables)
                 lastFrontAlert = isAlert
             }
             TpmsDecoder.Position.REAR -> {
-                if (isAlert && !lastRearAlert) scheduleAlertSequence("NISKIE CIŚNIENIE TYŁ", rearAlertRunnables)
+                if (isAlert && !lastRearAlert) scheduleAlertSequence("LOW REAR PRESSURE", rearAlertRunnables)
                 if (!isAlert && lastRearAlert) cancelAlertSequence(rearAlertRunnables)
                 lastRearAlert = isAlert
             }
@@ -279,6 +383,11 @@ class BleScannerService : Service() {
         broadcastReading(reading, isAlert)
     }
 
+    /**
+     * Fires [message] as an alert immediately, then twice more 30 and 60
+     * seconds later (three alerts total), unless cancelled early by
+     * [cancelAlertSequence] once the underlying condition resolves.
+     */
     private fun scheduleAlertSequence(message: String, runnables: MutableList<Runnable>) {
         cancelAlertSequence(runnables)
         val repeatCount = 3
@@ -294,6 +403,8 @@ class BleScannerService : Service() {
         runnables.forEach { alertHandler.removeCallbacks(it) }
         runnables.clear()
     }
+
+    // ------------------------------------------------------------- Alerts
 
     private fun triggerAlert(message: String) {
         if (settings.soundAlertsEnabled) playAlertSound()
@@ -352,7 +463,7 @@ class BleScannerService : Service() {
         val notificationManager = getSystemService(NotificationManager::class.java)
         val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tpms_icon)
-            .setContentTitle("RPax TPMS Alarm")
+            .setContentTitle("RPax TPMS Alert")
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -361,6 +472,8 @@ class BleScannerService : Service() {
         notificationManager.notify(ALERT_NOTIFICATION_ID, notification)
     }
 
+    // ------------------------------------------------------------------ GPS
+
     private fun startLocationUpdates() {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
             .setMinUpdateIntervalMillis(500L)
@@ -368,12 +481,15 @@ class BleScannerService : Service() {
         try {
             fusedLocationClient.requestLocationUpdates(request, locationCallback, mainLooper)
         } catch (_: SecurityException) {
+            // Missing ACCESS_FINE_LOCATION; speed will remain unavailable.
         }
     }
 
     private fun stopLocationUpdates() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
     }
+
+    // ------------------------------------------------------------ Broadcasts
 
     private fun broadcastReading(reading: TpmsDecoder.TpmsReading, isAlert: Boolean) {
         val intent = Intent(ACTION_TPMS_UPDATE).apply {
@@ -395,6 +511,8 @@ class BleScannerService : Service() {
         sendBroadcast(intent)
     }
 
+    // -------------------------------------------------------- Notification
+
     private fun createNotificationChannel() {
         val serviceChannel = NotificationChannel(
             SERVICE_CHANNEL_ID, "TPMS Monitoring", NotificationManager.IMPORTANCE_LOW
@@ -412,7 +530,18 @@ class BleScannerService : Service() {
     private fun buildForegroundNotification(title: String, text: String): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
-            Intent(this, DashboardActivity::class.java),
+            Intent(this, DashboardActivity::class.java).apply {
+                // Without these flags, tapping the notification while
+                // DashboardActivity is already running (e.g. in a
+                // different task, which the launcher vs. this
+                // notification can each start) creates a *second*
+                // instance/task instead of bringing the existing one to
+                // front -- symptom: the user has to back out/close the
+                // app twice, since two separate instances are stacked.
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, SERVICE_CHANNEL_ID)
@@ -442,6 +571,14 @@ class BleScannerService : Service() {
         const val EXTRA_PAIRING_MAC = "extra_pairing_mac"
 
         private const val PAIRING_TIMEOUT_MS = 60_000L
+
+        // Between two consecutive frames from the same sensor (typically
+        // seconds to at most ~1 minute apart), a real physical pressure or
+        // temperature change won't plausibly jump by more than this --
+        // anything bigger is more likely a corrupted frame than reality.
+        private const val MAX_PLAUSIBLE_PRESSURE_JUMP = 0.4f
+        private const val MAX_PLAUSIBLE_TEMP_JUMP = 15
+        private const val PENDING_MATCH_PRESSURE_TOLERANCE = 0.05f
 
         private const val NOTIFICATION_ID = 1001
         private const val ALERT_NOTIFICATION_ID = 1002

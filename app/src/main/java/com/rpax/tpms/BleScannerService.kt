@@ -84,6 +84,8 @@ class BleScannerService : Service() {
     private var lastConfirmedRear: TpmsDecoder.TpmsReading? = null
     private var pendingFront: TpmsDecoder.TpmsReading? = null
     private var pendingRear: TpmsDecoder.TpmsReading? = null
+    private var pendingRejectStreakFront = 0
+    private var pendingRejectStreakRear = 0
 
     private val alertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val frontAlertRunnables = mutableListOf<Runnable>()
@@ -235,36 +237,39 @@ class BleScannerService : Service() {
 
     /**
      * Returns [reading] if it's plausible given the last confirmed value for
-     * its position, or if it matches a pending candidate from the previous
-     * frame (two consecutive agreeing readings = accept as a real change).
-     * Otherwise stores it as the new pending candidate and returns null,
-     * holding it back from the UI/alerts for one frame.
+     * its position, or if it closely matches a pending candidate from the
+     * previous frame (two consecutive agreeing readings = accept as a real
+     * change). Otherwise stores it as the new pending candidate and returns
+     * null, holding it back from the UI/alerts for one frame.
+     *
+     * Safety valve: if readings keep getting rejected several times in a
+     * row, the newest one is accepted anyway regardless of match. Without
+     * this, a *wrong* confirmed baseline (e.g. from two glitchy frames that
+     * happened to agree with each other) could get permanently stuck --
+     * every subsequent *correct* reading would look like "the outlier"
+     * relative to that bad baseline, and natural sensor jitter frame-to-
+     * frame means it might never precisely re-match a single pending
+     * snapshot twice. A bounded streak of rejections is a stronger signal
+     * of a real, sustained change than of ongoing random corruption.
      */
     private fun filterOutlier(reading: TpmsDecoder.TpmsReading): TpmsDecoder.TpmsReading? {
-        val lastConfirmed = when (reading.position) {
-            TpmsDecoder.Position.FRONT -> lastConfirmedFront
-            TpmsDecoder.Position.REAR -> lastConfirmedRear
-            TpmsDecoder.Position.UNKNOWN -> null
-        }
+        val lastConfirmed = confirmedFor(reading.position)
 
         if (isPlausibleJump(lastConfirmed, reading)) {
-            setConfirmed(reading)
-            setPending(reading.position, null)
+            acceptReading(reading)
             return reading
         }
 
-        val pending = when (reading.position) {
-            TpmsDecoder.Position.FRONT -> pendingFront
-            TpmsDecoder.Position.REAR -> pendingRear
-            TpmsDecoder.Position.UNKNOWN -> null
-        }
-
-        if (pending != null &&
+        val pending = pendingFor(reading.position)
+        val matchesPending = pending != null &&
             kotlin.math.abs(reading.pressureBar - pending.pressureBar) <= PENDING_MATCH_PRESSURE_TOLERANCE &&
-            reading.temperatureC == pending.temperatureC
-        ) {
-            setConfirmed(reading)
-            setPending(reading.position, null)
+            kotlin.math.abs(reading.temperatureC - pending.temperatureC) <= PENDING_MATCH_TEMP_TOLERANCE
+
+        val streak = rejectStreakFor(reading.position) + 1
+        setRejectStreak(reading.position, streak)
+
+        if (matchesPending || streak >= MAX_REJECT_STREAK) {
+            acceptReading(reading)
             return reading
         }
 
@@ -272,11 +277,43 @@ class BleScannerService : Service() {
         return null
     }
 
+    private fun acceptReading(reading: TpmsDecoder.TpmsReading) {
+        setConfirmed(reading)
+        setPending(reading.position, null)
+        setRejectStreak(reading.position, 0)
+    }
+
     private fun isPlausibleJump(previous: TpmsDecoder.TpmsReading?, candidate: TpmsDecoder.TpmsReading): Boolean {
         val prev = previous ?: return true
         val pressureDelta = kotlin.math.abs(candidate.pressureBar - prev.pressureBar)
         val tempDelta = kotlin.math.abs(candidate.temperatureC - prev.temperatureC)
         return pressureDelta <= MAX_PLAUSIBLE_PRESSURE_JUMP && tempDelta <= MAX_PLAUSIBLE_TEMP_JUMP
+    }
+
+    private fun confirmedFor(position: TpmsDecoder.Position): TpmsDecoder.TpmsReading? = when (position) {
+        TpmsDecoder.Position.FRONT -> lastConfirmedFront
+        TpmsDecoder.Position.REAR -> lastConfirmedRear
+        TpmsDecoder.Position.UNKNOWN -> null
+    }
+
+    private fun pendingFor(position: TpmsDecoder.Position): TpmsDecoder.TpmsReading? = when (position) {
+        TpmsDecoder.Position.FRONT -> pendingFront
+        TpmsDecoder.Position.REAR -> pendingRear
+        TpmsDecoder.Position.UNKNOWN -> null
+    }
+
+    private fun rejectStreakFor(position: TpmsDecoder.Position): Int = when (position) {
+        TpmsDecoder.Position.FRONT -> pendingRejectStreakFront
+        TpmsDecoder.Position.REAR -> pendingRejectStreakRear
+        TpmsDecoder.Position.UNKNOWN -> 0
+    }
+
+    private fun setRejectStreak(position: TpmsDecoder.Position, value: Int) {
+        when (position) {
+            TpmsDecoder.Position.FRONT -> pendingRejectStreakFront = value
+            TpmsDecoder.Position.REAR -> pendingRejectStreakRear = value
+            TpmsDecoder.Position.UNKNOWN -> Unit
+        }
     }
 
     private fun setConfirmed(reading: TpmsDecoder.TpmsReading) {
@@ -579,6 +616,11 @@ class BleScannerService : Service() {
         private const val MAX_PLAUSIBLE_PRESSURE_JUMP = 0.4f
         private const val MAX_PLAUSIBLE_TEMP_JUMP = 15
         private const val PENDING_MATCH_PRESSURE_TOLERANCE = 0.05f
+        private const val PENDING_MATCH_TEMP_TOLERANCE = 2
+        // After this many consecutive "implausible" readings in a row for a
+        // position, accept the latest one unconditionally rather than risk
+        // staying stuck on a stale/wrong confirmed baseline forever.
+        private const val MAX_REJECT_STREAK = 3
 
         private const val NOTIFICATION_ID = 1001
         private const val ALERT_NOTIFICATION_ID = 1002

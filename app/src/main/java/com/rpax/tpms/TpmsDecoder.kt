@@ -47,10 +47,16 @@ object TpmsDecoder {
 
     /**
      * Decodes a 12-byte manufacturer data payload.
-     * Returns null if payload is invalid or too short.
+     * Returns null if payload is invalid, too short, or doesn't carry the
+     * scanning device's own MAC echoed in bytes [6..11] -- that echo is
+     * confirmed present in real captured frames, and checking it rejects
+     * manufacturer data from some unrelated nearby BLE device that happens
+     * to also be >=12 bytes (which would otherwise look like a valid
+     * frame and could get bound during pairing to the wrong "sensor").
      */
     fun decode(position: Position, mac: String, data: ByteArray): TpmsReading? {
         if (data.size < 12) return null
+        if (!macMatchesPayload(mac, data)) return null
 
         val unsigned: (Int) -> Int = { idx -> data[idx].toInt() and 0xFF }
 
@@ -77,5 +83,14 @@ object TpmsDecoder {
             batteryOk = batteryOk,
             rawBytes = data.copyOf()
         )
+    }
+
+    private fun macMatchesPayload(mac: String, data: ByteArray): Boolean {
+        val macBytes = mac.split(":").map { it.toIntOrNull(16) ?: return false }
+        if (macBytes.size != 6) return false
+        for (i in 0 until 6) {
+            if ((data[6 + i].toInt() and 0xFF) != macBytes[i]) return false
+        }
+        return true
     }
 }

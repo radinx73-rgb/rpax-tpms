@@ -164,6 +164,12 @@ class MainActivity : ComponentActivity() {
         }
         layout.addView(exportLogButton)
 
+        val exportFullScanLogButton = Button(this).apply {
+            text = "Export FULL Scan Record Log"
+            setOnClickListener { exportFullScanRecordLog() }
+        }
+        layout.addView(exportFullScanLogButton)
+
         val saveButton = Button(this).apply {
             text = "Save"
             setOnClickListener { saveSettings() }
@@ -299,6 +305,44 @@ class MainActivity : ComponentActivity() {
 
         val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
         val fileName = "rpax_ble_log_$timestamp.txt"
+        val content = lines.joinToString("\n")
+
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+
+        val resolver = applicationContext.contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        if (uri == null) {
+            Toast.makeText(this, "Failed to create log file", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        resolver.openOutputStream(uri)?.use { out ->
+            out.write(content.toByteArray(Charsets.UTF_8))
+        }
+        values.clear()
+        values.put(MediaStore.Downloads.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+
+        Toast.makeText(this, "Saved to Download/$fileName", Toast.LENGTH_LONG).show()
+    }
+
+    private fun exportFullScanRecordLog() {
+        val lines = FullScanRecordLog.snapshot()
+        if (lines.isEmpty()) {
+            Toast.makeText(
+                this,
+                "No full scan records captured yet -- wait near the sensors first",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+        val fileName = "rpax_full_scan_log_$timestamp.txt"
         val content = lines.joinToString("\n")
 
         val values = ContentValues().apply {

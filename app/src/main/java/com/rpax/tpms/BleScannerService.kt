@@ -212,9 +212,22 @@ class BleScannerService : Service() {
         scanFailureCount = 0
         val mac = result.device.address ?: return
 
-        val manufacturerData = result.scanRecord?.manufacturerSpecificData ?: return
-        if (manufacturerData.size() == 0) return
-        val payload = manufacturerData.valueAt(0) ?: return
+        val manufacturerData = result.scanRecord?.manufacturerSpecificData
+        val manufacturerPayload = if (manufacturerData != null && manufacturerData.size() > 0) {
+            manufacturerData.valueAt(0)
+        } else null
+
+        // Diagnostic: log the ENTIRE raw scan record (result.scanRecord?.bytes),
+        // not just the manufacturerSpecificData slice, for any device whose
+        // advertised name contains "TPMS" -- so we can check for a battery
+        // percentage byte that might live outside the 12-byte window we
+        // currently decode (osmart reads one at an offset far beyond it).
+        val deviceName = try { result.device.name } catch (_: SecurityException) { null }
+        if (deviceName != null && deviceName.contains("TPMS", ignoreCase = true)) {
+            FullScanRecordLog.record(mac, result.rssi, result.scanRecord?.bytes, manufacturerPayload)
+        }
+
+        val payload = manufacturerPayload ?: return
 
         val currentPairing = pairingPosition
         if (currentPairing != null && tryAcceptPairingCandidate(currentPairing, mac, payload)) {

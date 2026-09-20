@@ -74,6 +74,41 @@ class BleScannerService : Service() {
     private var scanFailureCount = 0
     private var scanRestartRunnable: Runnable? = null
 
+    // Set on EVERY scan callback firing, for ANY nearby BLE device -- not
+    // just our sensors. If this goes stale, the scan itself is wedged at
+    // the OS/service level (observed after a full app kill + relaunch),
+    // regardless of whether our sensors are even in range. The watchdog
+    // below uses it to force-recover automatically instead of staying
+    // stuck forever.
+    private var lastAnyScanResultAtMs: Long = 0L
+    private val watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var watchdogStarted = false
+    private val watchdogRunnable = object : Runnable {
+        override fun run() {
+            val now = System.currentTimeMillis()
+            if (lastAnyScanResultAtMs != 0L && now - lastAnyScanResultAtMs > WATCHDOG_STALE_MS) {
+                scanFailureCount = 0
+                scanRestartRunnable?.let { alertHandler.removeCallbacks(it) }
+                scanRestartRunnable = null
+                stopScanning()
+                startScanning()
+            }
+            watchdogHandler.postDelayed(this, WATCHDOG_CHECK_INTERVAL_MS)
+        }
+    }
+
+    private fun startWatchdog() {
+        if (watchdogStarted) return
+        watchdogStarted = true
+        lastAnyScanResultAtMs = System.currentTimeMillis()
+        watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_CHECK_INTERVAL_MS)
+    }
+
+    private fun stopWatchdog() {
+        watchdogStarted = false
+        watchdogHandler.removeCallbacks(watchdogRunnable)
+    }
+
     // Outlier filter: a single implausible jump in pressure/temperature
     // (e.g. a corrupted frame slipping past the length check) is held back
     // as a "pending" candidate instead of being shown immediately. It's
@@ -158,6 +193,7 @@ class BleScannerService : Service() {
                 scanFailureCount = 0
                 scanRestartRunnable?.let { alertHandler.removeCallbacks(it) }
                 scanRestartRunnable = null
+                lastAnyScanResultAtMs = System.currentTimeMillis()
                 stopScanning()
                 startScanning()
                 return START_STICKY
@@ -176,10 +212,12 @@ class BleScannerService : Service() {
         )
         startScanning()
         startLocationUpdates()
+        startWatchdog()
         return START_STICKY
     }
 
     override fun onDestroy() {
+        stopWatchdog()
         stopScanning()
         scanRestartRunnable?.let { alertHandler.removeCallbacks(it) }
         scanRestartRunnable = null
@@ -198,9 +236,21 @@ class BleScannerService : Service() {
 
     private fun startScanning() {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = bluetoothManager.adapter ?: return
-        if (!adapter.isEnabled) return
-        bleScanner = adapter.bluetoothLeScanner ?: return
+        val adapter = bluetoothManager.adapter
+        if (adapter == null || !adapter.isEnabled) {
+            // Right after a cold process restart (e.g. after "Stop & Close"
+            // then relaunching), the Bluetooth stack can briefly not be
+            // ready yet. Retry shortly instead of silently giving up --
+            // without this, scanning could simply never start at all.
+            alertHandler.postDelayed({ startScanning() }, STARTUP_RETRY_DELAY_MS)
+            return
+        }
+        val scanner = adapter.bluetoothLeScanner
+        if (scanner == null) {
+            alertHandler.postDelayed({ startScanning() }, STARTUP_RETRY_DELAY_MS)
+            return
+        }
+        bleScanner = scanner
 
         val scanSettings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -224,6 +274,7 @@ class BleScannerService : Service() {
     }
 
     private fun handleScanResult(result: ScanResult) {
+        lastAnyScanResultAtMs = System.currentTimeMillis()
         scanFailureCount = 0
         val mac = result.device.address ?: return
 
@@ -644,6 +695,14 @@ class BleScannerService : Service() {
         const val EXTRA_PAIRING_MAC = "extra_pairing_mac"
 
         private const val PAIRING_TIMEOUT_MS = 60_000L
+        private const val STARTUP_RETRY_DELAY_MS = 2_000L
+        // No scan result at all (any device) for this long means the scan
+        // itself is wedged, not that our sensors are just quiet -- real
+        // captured logs show normal gaps up to ~4 minutes between OUR
+        // sensors' own frames, but literally zero BLE traffic for 3 minutes
+        // straight is not normal in an environment with any BLE activity.
+        private const val WATCHDOG_STALE_MS = 180_000L
+        private const val WATCHDOG_CHECK_INTERVAL_MS = 60_000L
 
         // Between two consecutive frames from the same sensor (typically
         // seconds to at most ~1 minute apart), a real physical pressure or

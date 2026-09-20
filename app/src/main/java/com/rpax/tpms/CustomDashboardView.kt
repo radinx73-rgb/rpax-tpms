@@ -68,10 +68,11 @@ class CustomDashboardView @JvmOverloads constructor(
     private val rearHasData: Boolean get() = rearLastUpdateAt != 0L
 
     // A sensor is "stale" once too long has passed since its last real reading.
-    // Chosen generously (2 minutes) so normal gaps between periodic BLE
-    // transmissions -- which slow down while the bike is stationary -- never
-    // get mistaken for a lost connection or a pressure alarm.
-    private val staleAfterMillis = 120_000L
+    // Real captured logs show normal idle broadcast gaps of up to ~4 minutes
+    // between frames while the bike is stationary -- 5 minutes gives
+    // comfortable margin above that before flagging NO SIGNAL, so normal
+    // gaps never get mistaken for a lost connection or a pressure alarm.
+    private val staleAfterMillis = 300_000L
 
     private val frontStale: Boolean
         get() = frontHasData && (System.currentTimeMillis() - frontLastUpdateAt) > staleAfterMillis
@@ -91,6 +92,7 @@ class CustomDashboardView @JvmOverloads constructor(
 
     private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val dateFormat = SimpleDateFormat("EEE dd MMM", Locale.getDefault())
+    private val lastUpdateFormat = SimpleDateFormat("dd.MM HH:mm:ss", Locale.getDefault())
 
     fun updateFront(pressure: Float, temp: Int, batteryOk: Boolean = true) {
         frontPressureBar = pressure; frontTempC = temp; frontBatteryOk = batteryOk
@@ -163,6 +165,11 @@ class CustomDashboardView @JvmOverloads constructor(
         textSize = 51f
         letterSpacing = 0.15f
     }
+    private val lastUpdatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = neutralGray
+        textAlign = Paint.Align.CENTER
+        textSize = 51f
+    }
 
     private val statusBarTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -222,6 +229,15 @@ class CustomDashboardView @JvmOverloads constructor(
         val speedBaseline = h / 2f + 90f
         canvas.drawText(speedKmh.toString(), centerX, speedBaseline, speedPaint)
         canvas.drawText("km/h", centerX, speedBaseline + 60f, speedUnitPaint)
+
+        // Last time ANY sensor reading actually arrived (like osmart's/
+        // DJTPMS's "Data aktualizacji: ..." line), so it's obvious how
+        // fresh the data on screen really is.
+        val lastUpdateAt = maxOf(frontLastUpdateAt, rearLastUpdateAt)
+        if (lastUpdateAt != 0L) {
+            val text = "Sygnał: ${lastUpdateFormat.format(Date(lastUpdateAt))}"
+            canvas.drawText(text, centerX, speedBaseline + 130f, lastUpdatePaint)
+        }
     }
 
     private fun drawRightPanel(canvas: Canvas, left: Float, right: Float, h: Float) {

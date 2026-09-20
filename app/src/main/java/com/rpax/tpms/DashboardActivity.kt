@@ -100,6 +100,15 @@ class DashboardActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (hasAllPermissions()) {
+            startService(Intent(this, BleScannerService::class.java).apply {
+                action = BleScannerService.ACTION_REFRESH_SCAN
+            })
+        }
+    }
+
     override fun onStop() {
         unregisterReceiver(tpmsReceiver)
         super.onStop()

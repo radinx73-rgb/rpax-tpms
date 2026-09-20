@@ -147,6 +147,21 @@ class BleScannerService : Service() {
                 cancelPairing(notifyTimeout = false)
                 return START_STICKY
             }
+            ACTION_REFRESH_SCAN -> {
+                // Forces an immediate scan restart, bypassing any backoff
+                // delay currently pending. Call this when the app returns
+                // to the foreground (e.g. DashboardActivity.onResume()) --
+                // Android/MIUI silently downgrades BLE scan duty cycle
+                // while the app is backgrounded/screen-off, even for a
+                // foreground service, and this snaps it back to full speed
+                // instead of waiting out however much backoff had built up.
+                scanFailureCount = 0
+                scanRestartRunnable?.let { alertHandler.removeCallbacks(it) }
+                scanRestartRunnable = null
+                stopScanning()
+                startScanning()
+                return START_STICKY
+            }
         }
 
         val notification = buildForegroundNotification("RPax TPMS active", "Monitoring tire pressure")
@@ -216,12 +231,18 @@ class BleScannerService : Service() {
         val manufacturerPayload = if (manufacturerData != null && manufacturerData.size() > 0) {
             manufacturerData.valueAt(0)
         } else null
+        // The 2-byte manufacturer/company ID Android parsed out of the
+        // advertisement -- required by TpmsDecoder.decode() to validate
+        // the frame's checksum (that ID varies between sensors, e.g. front
+        // used 0x0000 and rear used 0x0800 in one real capture, so it must
+        // be read per-frame, never assumed to be 0).
+        val manufacturerCompanyId = if (manufacturerData != null && manufacturerData.size() > 0) {
+            manufacturerData.keyAt(0)
+        } else 0
 
         // Diagnostic: log the ENTIRE raw scan record (result.scanRecord?.bytes),
         // not just the manufacturerSpecificData slice, for any device whose
-        // advertised name contains "TPMS" -- so we can check for a battery
-        // percentage byte that might live outside the 12-byte window we
-        // currently decode (osmart reads one at an offset far beyond it).
+        // advertised name contains "TPMS".
         val deviceName = try { result.device.name } catch (_: SecurityException) { null }
         if (deviceName != null && deviceName.contains("TPMS", ignoreCase = true)) {
             FullScanRecordLog.record(mac, result.rssi, result.scanRecord?.bytes, manufacturerPayload)
@@ -230,14 +251,14 @@ class BleScannerService : Service() {
         val payload = manufacturerPayload ?: return
 
         val currentPairing = pairingPosition
-        if (currentPairing != null && tryAcceptPairingCandidate(currentPairing, mac, payload)) {
+        if (currentPairing != null && tryAcceptPairingCandidate(currentPairing, mac, manufacturerCompanyId, payload)) {
             return
         }
 
         val position = TpmsDecoder.positionForMac(mac, settings.frontMac, settings.rearMac)
         if (position == TpmsDecoder.Position.UNKNOWN) return
 
-        val reading = TpmsDecoder.decode(position, mac, payload) ?: return
+        val reading = TpmsDecoder.decode(position, mac, manufacturerCompanyId, payload) ?: return
 
         // Always log the raw frame, even one the outlier filter below ends
         // up rejecting -- that's exactly what makes a glitch like a single
@@ -357,12 +378,13 @@ class BleScannerService : Service() {
     private fun tryAcceptPairingCandidate(
         position: TpmsDecoder.Position,
         mac: String,
+        companyId: Int,
         payload: ByteArray
     ): Boolean {
         val otherMac = if (position == TpmsDecoder.Position.FRONT) settings.rearMac else settings.frontMac
         if (mac.equals(otherMac, ignoreCase = true)) return false
 
-        if (TpmsDecoder.decode(position, mac, payload) == null) return false
+        if (TpmsDecoder.decode(position, mac, companyId, payload) == null) return false
 
         when (position) {
             TpmsDecoder.Position.FRONT -> settings.frontMac = mac
@@ -608,6 +630,7 @@ class BleScannerService : Service() {
         const val ACTION_SPEED_UPDATE = "com.rpax.tpms.ACTION_SPEED_UPDATE"
         const val ACTION_START_PAIRING = "com.rpax.tpms.ACTION_START_PAIRING"
         const val ACTION_CANCEL_PAIRING = "com.rpax.tpms.ACTION_CANCEL_PAIRING"
+        const val ACTION_REFRESH_SCAN = "com.rpax.tpms.ACTION_REFRESH_SCAN"
         const val ACTION_PAIRING_RESULT = "com.rpax.tpms.ACTION_PAIRING_RESULT"
         const val ACTION_PAIRING_TIMEOUT = "com.rpax.tpms.ACTION_PAIRING_TIMEOUT"
 

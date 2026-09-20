@@ -631,7 +631,12 @@ class CustomDashboardView @JvmOverloads constructor(
         val tempText = if (hasData) "$tempC°C" else "--°C"
         canvas.drawText(tempText, centerX, tempBaseline, tempPaint)
 
-        if (hasData && !batteryOk) {
+        // Battery status: verified against a real checksum-validated frame
+        // (TpmsDecoder now reads actual voltage in byte[0], not the old
+        // mistaken byte[2]&1 bit which was really pressure's high byte).
+        // Voltage matched an independent multimeter reading (3.2V decoded
+        // vs 3.27V measured), so this is trusted.
+        if (BATTERY_STATUS_TRUSTED && hasData && !batteryOk) {
             val lowBatteryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = accentRed
                 textAlign = Paint.Align.RIGHT
@@ -640,5 +645,9 @@ class CustomDashboardView @JvmOverloads constructor(
             }
             canvas.drawText("LOW BATTERY", rect.right - padding, rect.bottom - padding + 2f, lowBatteryPaint)
         }
+    }
+
+    companion object {
+        private const val BATTERY_STATUS_TRUSTED = true
     }
 }

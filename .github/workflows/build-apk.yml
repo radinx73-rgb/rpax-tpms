@@ -20,6 +20,35 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Use a stable debug keystore (via repo secret, once configured)
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            echo "Secret DEBUG_KEYSTORE_BASE64 found -- using it (stable signature)."
+            echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+          else
+            echo "=============================================================="
+            echo "NO DEBUG_KEYSTORE_BASE64 SECRET SET YET."
+            echo "Generating a fresh debug.keystore for THIS build only."
+            echo "Copy the base64 block below and save it as a repo secret named"
+            echo "DEBUG_KEYSTORE_BASE64 (Settings -> Secrets and variables ->"
+            echo "Actions -> New repository secret) so every future build reuses"
+            echo "the SAME signature instead of generating a new one each time."
+            echo "=============================================================="
+            keytool -genkeypair -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "----- COPY EVERYTHING BETWEEN THE TWO LINES BELOW -----"
+            base64 -w0 ~/.android/debug.keystore
+            echo ""
+            echo "----- END OF COPY BLOCK -----"
+          fi
+
       - name: Build APK with Gradle
         run: gradle assembleDebug --stacktrace
 

@@ -84,7 +84,13 @@ object TpmsDecoder {
         val voltage = unsigned(0) / 10.0f
         val batteryOk = voltage > LOW_BATTERY_VOLTAGE_THRESHOLD
 
-        val temperatureC = unsigned(1)
+        // Signed, not unsigned -- byte[1] uses two's-complement for
+        // sub-zero readings (e.g. 0xFD = -3°C). Reading it as unsigned
+        // (0..255) would show a nonsense large positive number like 253
+        // instead of -3 the moment the real ambient temperature drops
+        // below 0°C, so this must stay a plain signed Kotlin Byte->Int
+        // conversion, never masked with `and 0xFF`.
+        val temperatureC = data[1].toInt()
 
         val pressureRaw16 = (unsigned(2) shl 8) or unsigned(3)
         val kpa = (if (pressureRaw16 < 101) 101 else pressureRaw16) - 101

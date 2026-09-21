@@ -68,11 +68,7 @@ class CustomDashboardView @JvmOverloads constructor(
     private val rearHasData: Boolean get() = rearLastUpdateAt != 0L
 
     // A sensor is "stale" once too long has passed since its last real reading.
-    // Real captured logs show normal idle broadcast gaps of up to ~4 minutes
-    // between frames while the bike is stationary -- 5 minutes gives
-    // comfortable margin above that before flagging NO SIGNAL, so normal
-    // gaps never get mistaken for a lost connection or a pressure alarm.
-    private val staleAfterMillis = 300_000L
+    private val staleAfterMillis = 180_000L
 
     private val frontStale: Boolean
         get() = frontHasData && (System.currentTimeMillis() - frontLastUpdateAt) > staleAfterMillis
@@ -167,8 +163,17 @@ class CustomDashboardView @JvmOverloads constructor(
     }
     private val lastUpdatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = neutralGray
+        textAlign = Paint.Align.LEFT
+        textSize = 38f
+    }
+    private val lastUpdateLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        textSize = 51f
+        textSize = 24f
+        typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+    }
+    private val lastUpdateBadgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2A2A2A")
     }
 
     private val statusBarTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -230,14 +235,41 @@ class CustomDashboardView @JvmOverloads constructor(
         canvas.drawText(speedKmh.toString(), centerX, speedBaseline, speedPaint)
         canvas.drawText("km/h", centerX, speedBaseline + 60f, speedUnitPaint)
 
-        // Last time ANY sensor reading actually arrived (like osmart's/
-        // DJTPMS's "Data aktualizacji: ..." line), so it's obvious how
-        // fresh the data on screen really is.
-        val lastUpdateAt = maxOf(frontLastUpdateAt, rearLastUpdateAt)
-        if (lastUpdateAt != 0L) {
-            val text = "Sygnał: ${lastUpdateFormat.format(Date(lastUpdateAt))}"
-            canvas.drawText(text, centerX, speedBaseline + 130f, lastUpdatePaint)
-        }
+        // Two separate "last signal" lines, one per sensor, each with a
+        // small labeled badge (per the requested layout) -- placed right
+        // under km/h, replacing the earlier single combined line.
+        drawSensorUpdateLine(canvas, "FRONT", frontLastUpdateAt, centerX, speedBaseline + 120f)
+        drawSensorUpdateLine(canvas, "REAR", rearLastUpdateAt, centerX, speedBaseline + 165f)
+    }
+
+    private fun drawSensorUpdateLine(
+        canvas: Canvas,
+        label: String,
+        timestampMs: Long,
+        centerX: Float,
+        baselineY: Float
+    ) {
+        val valueText = if (timestampMs != 0L) "Sygnał: ${lastUpdateFormat.format(Date(timestampMs))}" else "Sygnał: --"
+
+        val labelPaddingH = 14f
+        val labelPaddingV = 6f
+        val gap = 16f
+
+        val labelWidth = lastUpdateLabelPaint.measureText(label)
+        val labelBoxWidth = labelWidth + labelPaddingH * 2f
+        val valueWidth = lastUpdatePaint.measureText(valueText)
+        val totalWidth = labelBoxWidth + gap + valueWidth
+
+        var x = centerX - totalWidth / 2f
+
+        val fm = lastUpdateLabelPaint.fontMetrics
+        val boxTop = baselineY + fm.top - labelPaddingV
+        val boxBottom = baselineY + fm.bottom + labelPaddingV
+        canvas.drawRoundRect(x, boxTop, x + labelBoxWidth, boxBottom, 8f, 8f, lastUpdateBadgeBgPaint)
+        canvas.drawText(label, x + labelBoxWidth / 2f, baselineY, lastUpdateLabelPaint)
+
+        x += labelBoxWidth + gap
+        canvas.drawText(valueText, x, baselineY, lastUpdatePaint)
     }
 
     private fun drawRightPanel(canvas: Canvas, left: Float, right: Float, h: Float) {

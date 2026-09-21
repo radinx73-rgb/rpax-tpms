@@ -1,13 +1,11 @@
 package com.rpax.tpms
 
 import android.content.BroadcastReceiver
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
-import android.provider.MediaStore
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -17,9 +15,6 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import android.view.Gravity
 import android.widget.Toast
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Configuration screen for pressure/temperature thresholds and alert channels.
@@ -156,28 +151,18 @@ class MainActivity : ComponentActivity() {
         }
         layout.addView(watchCheck)
 
-        layout.addView(sectionTitle("Diagnostics"))
-
-        val exportLogButton = Button(this).apply {
-            text = "Export Raw BLE Log"
-            setOnClickListener { exportRawLog() }
-        }
-        layout.addView(exportLogButton)
-
-        val exportFullScanLogButton = Button(this).apply {
-            text = "Export FULL Scan Record Log"
-            setOnClickListener { exportFullScanRecordLog() }
-        }
-        layout.addView(exportFullScanLogButton)
-
         val saveButton = Button(this).apply {
-            text = "Save"
+            text = "Zapisz"
+            textSize = 22f
+            minHeight = 170
             setOnClickListener { saveSettings() }
         }
         layout.addView(saveButton)
 
         val backToDashboardButton = Button(this).apply {
-            text = "Open Dashboard"
+            text = "Otwórz kokpit"
+            textSize = 22f
+            minHeight = 170
             setOnClickListener {
                 // Just close this screen -- the existing DashboardActivity
                 // underneath it in the back stack becomes visible again.
@@ -294,78 +279,6 @@ class MainActivity : ComponentActivity() {
             TpmsDecoder.Position.UNKNOWN -> label = ""
         }
         Toast.makeText(this, "Odwiązano czujnik $label", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun exportRawLog() {
-        val lines = RawFrameLog.snapshot()
-        if (lines.isEmpty()) {
-            Toast.makeText(this, "No BLE frames captured yet -- ride a bit first", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-        val fileName = "rpax_ble_log_$timestamp.txt"
-        val content = lines.joinToString("\n")
-
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-
-        val resolver = applicationContext.contentResolver
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) {
-            Toast.makeText(this, "Failed to create log file", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        resolver.openOutputStream(uri)?.use { out ->
-            out.write(content.toByteArray(Charsets.UTF_8))
-        }
-        values.clear()
-        values.put(MediaStore.Downloads.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-
-        Toast.makeText(this, "Saved to Download/$fileName", Toast.LENGTH_LONG).show()
-    }
-
-    private fun exportFullScanRecordLog() {
-        val lines = FullScanRecordLog.snapshot()
-        if (lines.isEmpty()) {
-            Toast.makeText(
-                this,
-                "No full scan records captured yet -- wait near the sensors first",
-                Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-
-        val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-        val fileName = "rpax_full_scan_log_$timestamp.txt"
-        val content = lines.joinToString("\n")
-
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-
-        val resolver = applicationContext.contentResolver
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) {
-            Toast.makeText(this, "Failed to create log file", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        resolver.openOutputStream(uri)?.use { out ->
-            out.write(content.toByteArray(Charsets.UTF_8))
-        }
-        values.clear()
-        values.put(MediaStore.Downloads.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-
-        Toast.makeText(this, "Saved to Download/$fileName", Toast.LENGTH_LONG).show()
     }
 
     private fun saveSettings() {

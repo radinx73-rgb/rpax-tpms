@@ -68,7 +68,7 @@ class CustomDashboardView @JvmOverloads constructor(
     private val rearHasData: Boolean get() = rearLastUpdateAt != 0L
 
     // A sensor is "stale" once too long has passed since its last real reading.
-    private val staleAfterMillis = 180_000L
+    private val staleAfterMillis = 90_000L
 
     private val frontStale: Boolean
         get() = frontHasData && (System.currentTimeMillis() - frontLastUpdateAt) > staleAfterMillis
@@ -164,12 +164,12 @@ class CustomDashboardView @JvmOverloads constructor(
     private val lastUpdatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = neutralGray
         textAlign = Paint.Align.LEFT
-        textSize = 38f
+        textSize = 46f
     }
     private val lastUpdateLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        textSize = 24f
+        textSize = 30f
         typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
     }
     private val lastUpdateBadgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -235,11 +235,11 @@ class CustomDashboardView @JvmOverloads constructor(
         canvas.drawText(speedKmh.toString(), centerX, speedBaseline, speedPaint)
         canvas.drawText("km/h", centerX, speedBaseline + 60f, speedUnitPaint)
 
-        // Two separate "last signal" lines, one per sensor, each with a
-        // small labeled badge (per the requested layout) -- placed right
-        // under km/h, replacing the earlier single combined line.
-        drawSensorUpdateLine(canvas, "FRONT", frontLastUpdateAt, centerX, speedBaseline + 120f)
-        drawSensorUpdateLine(canvas, "REAR", rearLastUpdateAt, centerX, speedBaseline + 165f)
+        // Two separate "last signal" lines, one per sensor -- moved down,
+        // anchored near the bottom edge of the screen, well separated
+        // from the speed readout above.
+        drawSensorUpdateLine(canvas, "FRONT", frontLastUpdateAt, centerX, h - 110f)
+        drawSensorUpdateLine(canvas, "REAR", rearLastUpdateAt, centerX, h - 50f)
     }
 
     private fun drawSensorUpdateLine(

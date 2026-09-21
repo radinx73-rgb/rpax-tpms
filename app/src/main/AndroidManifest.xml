@@ -36,6 +36,7 @@
         <activity
             android:name=".DashboardActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.RpaxTpms.Fullscreen">

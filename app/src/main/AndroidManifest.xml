@@ -33,9 +33,9 @@
 
         <!-- Launcher: opens straight to the dashboard. Settings is reached
              only via the on-screen gear icon (DashboardActivity.onSettingsClick).
-             supportsPictureInPicture + the extra configChanges are needed for
-             the floating always-on-top mini window (like YouTube's) that
-             appears when the user backgrounds the app -- see
+             supportsPictureInPicture and the extra configChanges are needed for
+             the floating always on top mini window (like YouTube's) that
+             appears when the user backgrounds the app, see
              DashboardActivity.onUserLeaveHint()/onPictureInPictureModeChanged(). -->
         <activity
             android:name=".DashboardActivity"

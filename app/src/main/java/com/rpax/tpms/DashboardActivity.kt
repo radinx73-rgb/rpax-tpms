@@ -2,14 +2,17 @@ package com.rpax.tpms
 
 import android.Manifest
 import android.app.AlertDialog
+import android.app.PictureInPictureParams
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
+import android.util.Rational
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -26,6 +29,12 @@ import androidx.core.content.ContextCompat
 class DashboardActivity : ComponentActivity() {
 
     private lateinit var dashboardView: CustomDashboardView
+
+    // Set right before launching MainActivity so onUserLeaveHint() knows
+    // NOT to enter Picture-in-Picture for that -- onUserLeaveHint fires
+    // for any "user navigates away" event, including opening our own
+    // settings screen, not just pressing Home.
+    private var suppressNextPipEntry = false
 
     private val requiredPermissions = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -72,6 +81,7 @@ class DashboardActivity : ComponentActivity() {
 
         dashboardView = CustomDashboardView(this)
         dashboardView.onSettingsClick = {
+            suppressNextPipEntry = true
             startActivity(Intent(this, MainActivity::class.java))
         }
         dashboardView.onExitClick = {
@@ -112,6 +122,41 @@ class DashboardActivity : ComponentActivity() {
     override fun onStop() {
         unregisterReceiver(tpmsReceiver)
         super.onStop()
+    }
+
+    /**
+     * Fires right before the user navigates away (Home button, recent apps,
+     * etc.) -- this is the standard place to enter Picture-in-Picture, so
+     * the app keeps showing a small always-on-top floating window (like
+     * YouTube's mini player) instead of just disappearing into the
+     * background. Skipped when we're the ones launching MainActivity
+     * (opening settings shouldn't trigger PiP).
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (suppressNextPipEntry) {
+            suppressNextPipEntry = false
+            return
+        }
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(2, 1))
+            .build()
+        try {
+            enterPictureInPictureMode(params)
+        } catch (_: Exception) {
+            // Some devices/manufacturers disable or don't support PiP;
+            // just stay in the normal background state instead of crashing.
+        }
+    }
+
+    /**
+     * Switches CustomDashboardView to its compact PiP rendering (big
+     * colored status dots) while in the floating window, and back to the
+     * full dashboard once expanded/restored.
+     */
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        dashboardView.isPipMode = isInPictureInPictureMode
     }
 
     private fun hasAllPermissions(): Boolean = requiredPermissions.all {

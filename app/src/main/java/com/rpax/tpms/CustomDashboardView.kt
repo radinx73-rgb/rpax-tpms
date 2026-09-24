@@ -68,7 +68,7 @@ class CustomDashboardView @JvmOverloads constructor(
     private val rearHasData: Boolean get() = rearLastUpdateAt != 0L
 
     // A sensor is "stale" once too long has passed since its last real reading.
-    private val staleAfterMillis = 90_000L
+    private val staleAfterMillis = 130_000L
 
     private val frontStale: Boolean
         get() = frontHasData && (System.currentTimeMillis() - frontLastUpdateAt) > staleAfterMillis
@@ -209,6 +209,13 @@ class CustomDashboardView @JvmOverloads constructor(
         color = Color.WHITE
     }
 
+    /** Set from DashboardActivity.onPictureInPictureModeChanged(). */
+    var isPipMode: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
@@ -216,10 +223,56 @@ class CustomDashboardView @JvmOverloads constructor(
 
         canvas.drawRect(0f, 0f, w, h, bgPaint)
 
+        if (isPipMode) {
+            drawPipView(canvas, w, h)
+            return
+        }
+
         val leftWidth = w * 0.40f
         drawLeftPanel(canvas, leftWidth, h)
         canvas.drawLine(leftWidth, 20f, leftWidth, h - 20f, dividerPaint)
         drawRightPanel(canvas, leftWidth, w, h)
+    }
+
+    /**
+     * Compact rendering used only inside the small Picture-in-Picture
+     * window (dragged around, always-on-top, like YouTube's mini player).
+     * Big colored dots so status is readable even shrunk down: green=OK,
+     * red=alert (blinking), amber=no signal yet at all (blinking).
+     */
+    private fun drawPipView(canvas: Canvas, w: Float, h: Float) {
+        val dotRadius = minOf(w, h) * 0.16f
+        val leftCx = w * 0.28f
+        val rightCx = w * 0.72f
+        val cy = h * 0.38f
+
+        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        dotPaint.color = pipStatusColor(frontHasData, frontStale, frontAlert)
+        canvas.drawCircle(leftCx, cy, dotRadius, dotPaint)
+        dotPaint.color = pipStatusColor(rearHasData, rearStale, rearAlert)
+        canvas.drawCircle(rightCx, cy, dotRadius, dotPaint)
+
+        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            textSize = h * 0.09f
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
+        canvas.drawText("FRONT", leftCx, h * 0.14f, labelPaint)
+        canvas.drawText("REAR", rightCx, h * 0.14f, labelPaint)
+
+        val valuePaint = Paint(labelPaint).apply { textSize = h * 0.13f }
+        val frontText = if (frontHasData) String.format(Locale.US, "%.1f bar", frontPressureBar) else "--"
+        val rearText = if (rearHasData) String.format(Locale.US, "%.1f bar", rearPressureBar) else "--"
+        canvas.drawText(frontText, leftCx, h * 0.75f, valuePaint)
+        canvas.drawText(rearText, rightCx, h * 0.75f, valuePaint)
+    }
+
+    private fun pipStatusColor(hasData: Boolean, stale: Boolean, alert: Boolean): Int = when {
+        !hasData -> if (blinkPhase) accentAmber else Color.DKGRAY
+        stale -> if (blinkPhase) accentAmber else Color.DKGRAY
+        alert -> if (blinkPhase) accentRed else Color.parseColor("#7A1F1F")
+        else -> accentGreen
     }
 
     private fun drawLeftPanel(canvas: Canvas, panelWidth: Float, h: Float) {

@@ -20,12 +20,8 @@ import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.support.v4.media.MediaMetadataCompat
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import androidx.media.app.NotificationCompat as MediaNotificationCompat
 import java.util.Locale
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -160,8 +156,6 @@ class BleScannerService : Service() {
         }
     }
 
-    private lateinit var mediaSession: MediaSessionCompat
-
     override fun onCreate() {
         super.onCreate()
         settings = TpmsSettings(this)
@@ -171,47 +165,23 @@ class BleScannerService : Service() {
         nodeClient = Wearable.getNodeClient(this)
         setupSoundPool()
         createNotificationChannel()
-        setupMediaSession()
-    }
-
-    /**
-     * A dummy "always playing" MediaSession exists purely so the foreground
-     * notification can use MediaStyle -- this is what gets the persistent
-     * quick-glance "pill" near the camera cutout on MIUI/HyperOS (the same
-     * treatment music players get), showing live pressure readings at a
-     * glance without opening the app. There's no real audio playback; the
-     * play/pause action is unused (state is always STATE_PLAYING) since it
-     * doesn't correspond to anything meaningful here.
-     */
-    private fun setupMediaSession() {
-        mediaSession = MediaSessionCompat(this, "RpaxTpmsMediaSession").apply {
-            setPlaybackState(
-                PlaybackStateCompat.Builder()
-                    .setActions(PlaybackStateCompat.ACTION_PLAY_PAUSE)
-                    .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1f)
-                    .build()
-            )
-            isActive = true
-        }
-        updateMediaSessionMetadata("RPax TPMS")
-    }
-
-    private fun updateMediaSessionMetadata(nowPlayingTitle: String) {
-        if (!::mediaSession.isInitialized) return
-        mediaSession.setMetadata(
-            MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, nowPlayingTitle)
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "RPax TPMS")
-                .build()
-        )
     }
 
     /**
      * Rebuilds and re-posts the foreground notification with the latest
-     * known pressure/temp for both sensors, and updates the media session
-     * metadata the same way -- called whenever a new reading is confirmed,
-     * so the pill/notification stays current without waiting for the user
-     * to open the app.
+     * known pressure/temp for both sensors -- called whenever a new
+     * reading is confirmed, so the notification stays current without
+     * waiting for the user to open the app.
+     *
+     * Deliberately a PLAIN notification, not MediaStyle: an earlier version
+     * used a dummy MediaSession to get the persistent "pill" near the
+     * camera cutout, but any active MediaSession also makes Android show a
+     * Cast/output-switcher button -- which the user tapped and it actually
+     * cast a "Default Media Receiver" to a TV on the network. That's a
+     * real, confusing side effect with no clean way to suppress just the
+     * Cast button while keeping MediaStyle, so it's not worth the pill.
+     * The always-on-top "floating window while using other apps" need is
+     * now covered properly by Picture-in-Picture (see DashboardActivity).
      */
     private fun refreshNotification() {
         val front = lastConfirmedFront
@@ -223,8 +193,6 @@ class BleScannerService : Service() {
             String.format(Locale.US, "REAR %.1f bar %d°C", rear.pressureBar, rear.temperatureC)
         } else "REAR --"
         val title = "$frontText   $rearText"
-
-        updateMediaSessionMetadata(title)
 
         val notification = buildForegroundNotification(title, "Tap to open RPax TPMS")
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -272,8 +240,7 @@ class BleScannerService : Service() {
             notification,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             else 0
         )
         startScanning()
@@ -293,10 +260,6 @@ class BleScannerService : Service() {
         cancelAlertSequence(rearAlertRunnables)
         soundPool?.release()
         soundPool = null
-        if (::mediaSession.isInitialized) {
-            mediaSession.isActive = false
-            mediaSession.release()
-        }
         super.onDestroy()
     }
 
@@ -744,11 +707,6 @@ class BleScannerService : Service() {
             .setContentText(text)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .apply {
-                if (::mediaSession.isInitialized) {
-                    setStyle(MediaNotificationCompat.MediaStyle().setMediaSession(mediaSession.sessionToken))
-                }
-            }
             .build()
     }
 

@@ -44,7 +44,4 @@ dependencies {
 
     // Android Auto
     implementation("androidx.car.app:app:1.4.0")
-
-    // MediaSession for the "media pill"/quick-glance notification
-    implementation("androidx.media:media:1.7.0")
 }

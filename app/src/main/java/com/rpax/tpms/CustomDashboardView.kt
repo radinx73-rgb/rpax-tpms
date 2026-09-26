@@ -126,8 +126,10 @@ class CustomDashboardView @JvmOverloads constructor(
 
     // ---- Colors ----
     private val bgColor = Color.parseColor("#0A0A0A")
-    private val accentGreen = Color.parseColor("#2ECC71")
-    private val accentRed = Color.parseColor("#E74C3C")
+    // Green normalized to the "PiP normal" GIMP mockup swatch (sampled: RGB 36,145,64).
+    private val accentGreen = Color.parseColor("#249140")
+    // Reddened up ("more vivid") versus the mockup's own red (RGB 248,12,12).
+    private val accentRed = Color.parseColor("#FF1E1E")
     private val accentAmber = Color.parseColor("#B8860B")
     private val tileColor = Color.parseColor("#1E1E1E")
     private val textWhite = Color.parseColor("#F5F5F5")
@@ -237,42 +239,94 @@ class CustomDashboardView @JvmOverloads constructor(
     /**
      * Compact rendering used only inside the small Picture-in-Picture
      * window (dragged around, always-on-top, like YouTube's mini player).
-     * Big colored dots so status is readable even shrunk down: green=OK,
-     * red=alert (blinking), amber=no signal yet at all (blinking).
+     * Two rounded-corner tiles side by side (FRONT/REAR), each filled
+     * solid with the state color -- green=OK, red=alert (blinking),
+     * amber=no signal (blinking) -- with a thin black divider between
+     * them, matching the GIMP mockup. Corner radius mirrors the rounded
+     * look of the normal (non-PiP) FRONT/REAR tiles.
      */
     private fun drawPipView(canvas: Canvas, w: Float, h: Float) {
-        val dotRadius = minOf(w, h) * 0.16f
-        val leftCx = w * 0.28f
-        val rightCx = w * 0.72f
-        val cy = h * 0.38f
+        val dividerWidth = w * 0.025f
+        val tileWidth = (w - dividerWidth) / 2f
+        val cornerRadius = minOf(tileWidth, h) * 0.14f
 
-        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        dotPaint.color = pipStatusColor(frontHasData, frontStale, frontAlert)
-        canvas.drawCircle(leftCx, cy, dotRadius, dotPaint)
-        dotPaint.color = pipStatusColor(rearHasData, rearStale, rearAlert)
-        canvas.drawCircle(rightCx, cy, dotRadius, dotPaint)
+        canvas.drawRect(tileWidth, 0f, tileWidth + dividerWidth, h, Paint().apply { color = Color.BLACK })
 
-        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textAlign = Paint.Align.CENTER
-            textSize = h * 0.09f
-            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
-        }
-        canvas.drawText("FRONT", leftCx, h * 0.14f, labelPaint)
-        canvas.drawText("REAR", rightCx, h * 0.14f, labelPaint)
-
-        val valuePaint = Paint(labelPaint).apply { textSize = h * 0.13f }
-        val frontText = if (frontHasData) String.format(Locale.US, "%.1f bar", frontPressureBar) else "--"
-        val rearText = if (rearHasData) String.format(Locale.US, "%.1f bar", rearPressureBar) else "--"
-        canvas.drawText(frontText, leftCx, h * 0.75f, valuePaint)
-        canvas.drawText(rearText, rightCx, h * 0.75f, valuePaint)
+        drawPipTile(
+            canvas,
+            RectF(0f, 0f, tileWidth, h),
+            cornerRadius,
+            "FRONT",
+            frontHasData, frontStale, frontAlert,
+            frontPressureBar, frontTempC
+        )
+        drawPipTile(
+            canvas,
+            RectF(tileWidth + dividerWidth, 0f, w, h),
+            cornerRadius,
+            "REAR",
+            rearHasData, rearStale, rearAlert,
+            rearPressureBar, rearTempC
+        )
     }
 
-    private fun pipStatusColor(hasData: Boolean, stale: Boolean, alert: Boolean): Int = when {
-        !hasData -> if (blinkPhase) accentAmber else Color.DKGRAY
-        stale -> if (blinkPhase) accentAmber else Color.DKGRAY
-        alert -> if (blinkPhase) accentRed else Color.parseColor("#7A1F1F")
-        else -> accentGreen
+    private fun drawPipTile(
+        canvas: Canvas,
+        rect: RectF,
+        cornerRadius: Float,
+        label: String,
+        hasData: Boolean,
+        stale: Boolean,
+        alert: Boolean,
+        pressureBar: Float,
+        tempC: Int
+    ) {
+        val bgColorState = when {
+            !hasData || stale -> if (blinkPhase) accentAmber else Color.DKGRAY
+            alert -> if (blinkPhase) accentRed else Color.parseColor("#7A1F1F")
+            else -> accentGreen
+        }
+        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = bgColorState
+        })
+
+        val centerX = rect.centerX()
+        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textAlign = Paint.Align.CENTER
+            textSize = rect.height() * 0.10f
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
+        canvas.drawText(label, centerX, rect.top + rect.height() * 0.16f, labelPaint)
+
+        val valueText = if (hasData && !stale) {
+            String.format(Locale.US, "%.1f bar", pressureBar)
+        } else {
+            "NO SIGNAL"
+        }
+        val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
+        // "NO SIGNAL" is much wider than "X.X bar" -- shrink the font just
+        // for that text so it never overflows the tile at small PiP sizes.
+        val maxValueWidth = rect.width() * 0.90f
+        var valueTextSize = rect.height() * 0.30f
+        valuePaint.textSize = valueTextSize
+        while (valuePaint.measureText(valueText) > maxValueWidth && valueTextSize > rect.height() * 0.08f) {
+            valueTextSize -= 1f
+            valuePaint.textSize = valueTextSize
+        }
+        canvas.drawText(valueText, centerX, rect.top + rect.height() * 0.58f, valuePaint)
+
+        val tempPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textAlign = Paint.Align.CENTER
+            textSize = rect.height() * 0.11f
+        }
+        val tempText = if (hasData) "$tempC°C" else "--°C"
+        canvas.drawText(tempText, centerX, rect.top + rect.height() * 0.78f, tempPaint)
     }
 
     private fun drawLeftPanel(canvas: Canvas, panelWidth: Float, h: Float) {

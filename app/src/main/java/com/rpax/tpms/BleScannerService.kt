@@ -130,8 +130,39 @@ class BleScannerService : Service() {
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val location: Location = result.lastLocation ?: return
+
+            // Some fixes carry no speed data at all -- nothing to show yet.
+            if (!location.hasSpeed()) return
+
+            // A coarse horizontal fix (weak/multipath GPS -- e.g. indoors,
+            // near walls/windows) can report a phantom nonzero speed even
+            // while completely stationary (confirmed: sensors sitting on a
+            // table indoors showed 20 km/h). Poor accuracy is the main
+            // giveaway that the speed value can't be trusted, so zero it
+            // instead of displaying it.
+            if (location.hasAccuracy() && location.accuracy > MAX_ACCURACY_FOR_SPEED_M) {
+                lastSpeedKmh = 0
+                broadcastSpeed(lastSpeedKmh)
+                return
+            }
+
+            // Where available (API 26+, matches our minSdk), also reject a
+            // fix whose own reported speed accuracy is too coarse to trust.
+            if (location.hasSpeedAccuracy() &&
+                location.speedAccuracyMetersPerSecond > MAX_SPEED_ACCURACY_MS
+            ) {
+                lastSpeedKmh = 0
+                broadcastSpeed(lastSpeedKmh)
+                return
+            }
+
             val speedMs = location.speed
-            lastSpeedKmh = (speedMs * 3.6f).toInt().coerceAtLeast(0)
+            val speedKmh = (speedMs * 3.6f).toInt().coerceAtLeast(0)
+
+            // Below a few km/h, GPS speed is dominated by noise/drift even
+            // on an otherwise good fix -- floor it to 0 so a parked/still
+            // bike reads a clean 0, not a flickering 1-3 km/h.
+            lastSpeedKmh = if (speedKmh < MIN_DISPLAYED_SPEED_KMH) 0 else speedKmh
             broadcastSpeed(lastSpeedKmh)
         }
     }
@@ -727,6 +758,15 @@ class BleScannerService : Service() {
         const val EXTRA_SPEED = "extra_speed"
         const val EXTRA_PAIRING_POSITION = "extra_pairing_position"
         const val EXTRA_PAIRING_MAC = "extra_pairing_mac"
+
+        // GPS-speed reliability filter (see locationCallback): a fix this
+        // coarse (meters) or a self-reported speed accuracy this poor
+        // (m/s) is not trusted -- speed is shown as 0 instead.
+        private const val MAX_ACCURACY_FOR_SPEED_M = 20f
+        private const val MAX_SPEED_ACCURACY_MS = 1.5f
+        // Below this many km/h, GPS speed noise/drift dominates the real
+        // signal -- treated as standing still.
+        private const val MIN_DISPLAYED_SPEED_KMH = 3
 
         private const val PAIRING_TIMEOUT_MS = 60_000L
         private const val STARTUP_RETRY_DELAY_MS = 2_000L

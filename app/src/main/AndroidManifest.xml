@@ -31,10 +31,17 @@
         android:theme="@style/Theme.RpaxTpms"
         android:supportsRtl="true">
 
+        <!-- REQUIRED by the androidx.car.app library, without this the
+             Android Auto host silently refuses to list the app at all
+             (no error shown anywhere, it just never appears). -->
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="1" />
+
         <!-- Launcher: opens straight to the dashboard. Settings is reached
              only via the on-screen gear icon (DashboardActivity.onSettingsClick).
-             supportsPictureInPicture and the extra configChanges are needed for
-             the floating always on top mini window (like YouTube's) that
+             supportsPictureInPicture + the extra configChanges are needed for
+             the floating always-on-top mini window (like YouTube's) that
              appears when the user backgrounds the app, see
              DashboardActivity.onUserLeaveHint()/onPictureInPictureModeChanged(). -->
         <activity

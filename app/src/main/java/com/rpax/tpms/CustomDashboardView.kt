@@ -230,10 +230,89 @@ class CustomDashboardView @JvmOverloads constructor(
             return
         }
 
+        if (h > w) {
+            drawPortraitLayout(canvas, w, h)
+            return
+        }
+
         val leftWidth = w * 0.40f
         drawLeftPanel(canvas, leftWidth, h)
         canvas.drawLine(leftWidth, 20f, leftWidth, h - 20f, dividerPaint)
         drawRightPanel(canvas, leftWidth, w, h)
+    }
+
+    /**
+     * Portrait layout, used automatically whenever the device is taller
+     * than it is wide (screen rotation is unlocked -- see AndroidManifest's
+     * fullSensor). Top half: clock/date, speedometer, last-signal times
+     * (same content as drawLeftPanel in landscape, just spanning the full
+     * width instead of the left 40%). Bottom half: status bar, motorcycle
+     * graphic, FRONT/REAR tiles -- the motorcycle graphic is the one
+     * element allowed to shrink if the available height is tight; the
+     * tiles keep their normal proportions and only narrow if genuinely
+     * needed, per the requested design.
+     */
+    private fun drawPortraitLayout(canvas: Canvas, w: Float, h: Float) {
+        val topHeight = h * 0.5f
+        val bottomHeight = h - topHeight
+
+        drawLeftPanel(canvas, w, topHeight)
+        canvas.drawLine(20f, topHeight, w - 20f, topHeight, dividerPaint)
+
+        canvas.save()
+        canvas.translate(0f, topHeight)
+        drawBottomPanel(canvas, w, bottomHeight)
+        canvas.restore()
+    }
+
+    private fun drawBottomPanel(canvas: Canvas, w: Float, h: Float) {
+        val anyAlert = frontAlert || rearAlert
+        val noDataYet = !frontHasData && !rearHasData
+        val panelLeft = 24f
+        val panelRight = w - 24f
+        val panelWidthPx = panelRight - panelLeft
+
+        // Status bar -- same proportional height as the landscape version.
+        val statusBarHeight = 64f * density
+        val statusRect = RectF(panelLeft, 18f, panelRight, 18f + statusBarHeight)
+        val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = when {
+                anyAlert && blinkPhase -> accentRed
+                anyAlert -> Color.parseColor("#7A1F1F")
+                noDataYet -> accentAmber
+                else -> accentGreen
+            }
+        }
+        canvas.drawRoundRect(statusRect, 14f, 14f, statusPaint)
+        val statusText = when {
+            anyAlert && frontAlert && rearAlert -> "ALERT: CHECK FRONT & REAR PRESSURE"
+            anyAlert && frontAlert -> "ALERT: LOW FRONT PRESSURE"
+            anyAlert -> "ALERT: LOW REAR PRESSURE"
+            noDataYet -> "WAITING FOR SENSORS"
+            else -> "SYSTEM OK"
+        }
+        canvas.drawText(statusText, statusRect.centerX(), statusRect.centerY() + 12f, statusBarTextPaint)
+        drawStatusBarIcons(canvas, statusRect, statusPaint.color)
+
+        // Tiles first (bottom-anchored, fixed share of the available
+        // height) so we know exactly how much room is left for the
+        // motorcycle graphic -- which shrinks to whatever remains instead
+        // of forcing a minimum size.
+        val tileGap = 16f
+        val tileAreaHeight = (h * 0.32f).coerceAtMost(244f)
+        val tileBottom = h - 16f
+        val tileTop = tileBottom - tileAreaHeight
+        val tileWidth = (panelWidthPx - tileGap) / 2f
+
+        val motoTop = statusRect.bottom + 20f
+        val motoBottom = (tileTop - 16f).coerceAtLeast(motoTop + 40f)
+        val motoRect = RectF(panelLeft, motoTop, panelRight, motoBottom)
+        drawMotorcycle(canvas, motoRect, anyAlert)
+
+        val frontTileRect = RectF(panelLeft, tileTop, panelLeft + tileWidth, tileBottom)
+        val rearTileRect = RectF(panelLeft + tileWidth + tileGap, tileTop, panelRight, tileBottom)
+        drawTile(canvas, frontTileRect, "FRONT", frontPressureBar, frontTempC, frontAlert, frontHasData, frontStale, frontBatteryOk)
+        drawTile(canvas, rearTileRect, "REAR", rearPressureBar, rearTempC, rearAlert, rearHasData, rearStale, rearBatteryOk)
     }
 
     /**

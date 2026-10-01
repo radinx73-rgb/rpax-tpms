@@ -254,27 +254,24 @@ class CustomDashboardView @JvmOverloads constructor(
      */
     private fun drawPortraitLayout(canvas: Canvas, w: Float, h: Float) {
         val topHeight = h * 0.5f
-        val bottomHeight = h - topHeight
 
         drawLeftPanel(canvas, w, topHeight)
         canvas.drawLine(20f, topHeight, w - 20f, topHeight, dividerPaint)
 
-        canvas.save()
-        canvas.translate(0f, topHeight)
-        drawBottomPanel(canvas, w, bottomHeight)
-        canvas.restore()
+        drawBottomPanel(canvas, w, topHeight, h)
     }
 
-    private fun drawBottomPanel(canvas: Canvas, w: Float, h: Float) {
+    private fun drawBottomPanel(canvas: Canvas, w: Float, panelTop: Float, panelBottom: Float) {
         val anyAlert = frontAlert || rearAlert
         val noDataYet = !frontHasData && !rearHasData
         val panelLeft = 24f
         val panelRight = w - 24f
         val panelWidthPx = panelRight - panelLeft
+        val availableHeight = panelBottom - panelTop
 
         // Status bar -- same proportional height as the landscape version.
         val statusBarHeight = 64f * density
-        val statusRect = RectF(panelLeft, 18f, panelRight, 18f + statusBarHeight)
+        val statusRect = RectF(panelLeft, panelTop + 18f, panelRight, panelTop + 18f + statusBarHeight)
         val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = when {
                 anyAlert && blinkPhase -> accentRed
@@ -299,8 +296,8 @@ class CustomDashboardView @JvmOverloads constructor(
         // motorcycle graphic -- which shrinks to whatever remains instead
         // of forcing a minimum size.
         val tileGap = 16f
-        val tileAreaHeight = (h * 0.32f).coerceAtMost(244f)
-        val tileBottom = h - 16f
+        val tileAreaHeight = (availableHeight * 0.32f).coerceAtMost(244f)
+        val tileBottom = panelBottom - 16f
         val tileTop = tileBottom - tileAreaHeight
         val tileWidth = (panelWidthPx - tileGap) / 2f
 

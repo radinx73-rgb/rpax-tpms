@@ -48,7 +48,7 @@
             android:name=".DashboardActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullSensor"
             android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.RpaxTpms.Fullscreen">
@@ -61,7 +61,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="false"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullSensor"
             android:label="RPax TPMS Settings" />
 
         <service

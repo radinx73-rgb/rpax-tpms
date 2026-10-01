@@ -413,8 +413,30 @@ class CustomDashboardView @JvmOverloads constructor(
         canvas.drawText(clockFormat.format(now), centerX, 122f, clockPaint)
         canvas.drawText(dateFormat.format(now).uppercase(Locale.getDefault()), centerX, 196f, datePaint)
 
-        // Huge speed value, vertically centered
+        // Huge speed value, vertically centered. Font size is computed
+        // fresh each draw to be the LARGEST that still clears the date
+        // above and the "Sygnał" lines below, and still fits 3 digits
+        // (worst case, e.g. "188") within the panel width -- using the
+        // real Paint font metrics (exact, not a guessed ratio), so this
+        // self-adjusts correctly for both landscape and portrait (whose
+        // panelWidth/h differ) without ever overlapping the fixed anchors.
         val speedBaseline = h / 2f + 90f
+        val safeTopY = 236f // a bit below the date line's own visual bottom
+        val safeBottomY = h - 140f // a bit above the FRONT "Sygnał" line
+
+        val refSize = 100f
+        speedPaint.textSize = refSize
+        val ascentRatio = -speedPaint.fontMetrics.ascent / refSize
+        val descentRatio = speedPaint.fontMetrics.descent / refSize
+        val widthRatio = speedPaint.measureText("188") / refSize
+
+        val maxSizeByTop = (speedBaseline - safeTopY) / ascentRatio
+        val maxSizeByBottom = (safeBottomY - speedBaseline) / descentRatio
+        val maxSizeByWidth = (panelWidth - 48f) / widthRatio
+
+        speedPaint.textSize = minOf(maxSizeByTop, maxSizeByBottom, maxSizeByWidth)
+            .coerceAtLeast(335f) // never shrink below the original design size
+
         canvas.drawText(speedKmh.toString(), centerX, speedBaseline, speedPaint)
         canvas.drawText("km/h", centerX, speedBaseline + 60f, speedUnitPaint)
 
